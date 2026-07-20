@@ -71,6 +71,10 @@ and \code{colour} on the same layer is not supported.
 Only a bare column name is supported for the \code{fill}/\code{colour} aesthetics;
 a constant or a computed expression (e.g. \code{aes(fill = AREA * 2)}) is an
 error.
+
+The project opens zoomed to the plot's displayed range (the panel range,
+including the default expansion and any \code{\link[ggplot2:coord_sf]{ggplot2::coord_sf()}} \code{xlim}/
+\code{ylim}), reprojected to the project CRS, rather than the whole world.
 }
 \examples{
 library(ggplot2)

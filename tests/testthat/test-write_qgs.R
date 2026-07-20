@@ -274,6 +274,110 @@ project_crs_block <- function(out) {
   substr(out, start, end)
 }
 
+# The <mapcanvas> initial view: the first <extent>...</extent> block in the
+# document, returned as c(xmin, ymin, xmax, ymax).
+canvas_extent <- function(out) {
+  block <- regmatches(out, regexpr("(?s)<extent>.*?</extent>", out, perl = TRUE))
+  get <- function(tag) {
+    as.numeric(sub(
+      paste0("(?s).*<", tag, ">([^<]*)</", tag, ">.*"), "\\1", block,
+      perl = TRUE
+    ))
+  }
+  c(xmin = get("xmin"), ymin = get("ymin"), xmax = get("xmax"), ymax = get("ymax"))
+}
+
+default_view_extent <- function(out) {
+  attrs <- regmatches(out, regexpr("<DefaultViewExtent [^>]*>", out))
+  get <- function(name) {
+    as.numeric(sub(paste0('.*', name, '="([^"]*)".*'), "\\1", attrs))
+  }
+  c(xmin = get("xmin"), ymin = get("ymin"), xmax = get("xmax"), ymax = get("ymax"))
+}
+
+# The world extent the template ships with (EPSG:3857 bounds).
+WORLD_EXTENT_XMIN <- -20037508.34278924
+
+test_that("the map canvas zooms to the plot extent, reprojected to the project CRS", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA))
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path)
+
+  ext <- canvas_extent(read_qgs(path))
+  expect_true(all(is.finite(ext)))
+  # Not the template's whole-world default.
+  expect_gt(ext[["xmin"]], WORLD_EXTENT_XMIN + 1)
+
+  # The panel range (in the layer CRS, EPSG:4267) reprojected to the
+  # project CRS (EPSG:3857).
+  pp <- ggplot2::ggplot_build(p)@layout$panel_params[[1]]
+  bb <- sf::st_bbox(
+    c(xmin = pp$x_range[1], ymin = pp$y_range[1],
+      xmax = pp$x_range[2], ymax = pp$y_range[2]),
+    crs = sf::st_crs(pp$crs)
+  )
+  expected <- sf::st_bbox(sf::st_transform(sf::st_as_sfc(bb), 3857))
+  expect_equal(
+    unname(ext),
+    unname(expected[c("xmin", "ymin", "xmax", "ymax")]),
+    tolerance = 1e-3
+  )
+})
+
+test_that("the default view extent is zoomed too", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA))
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path)
+
+  out <- read_qgs(path)
+  expect_equal(canvas_extent(out), default_view_extent(out))
+  expect_gt(default_view_extent(out)[["xmin"]], WORLD_EXTENT_XMIN + 1)
+})
+
+test_that("with use_plot_crs the canvas extent is the panel range as-is", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA))
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path, use_plot_crs = TRUE)
+
+  ext <- canvas_extent(read_qgs(path))
+  pp <- ggplot2::ggplot_build(p)@layout$panel_params[[1]]
+  expect_equal(
+    unname(ext),
+    c(pp$x_range[1], pp$y_range[1], pp$x_range[2], pp$y_range[2]),
+    tolerance = 1e-6
+  )
+})
+
+test_that("coord_sf() xlim/ylim narrow the canvas extent", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA)) +
+    ggplot2::coord_sf(xlim = c(-80, -78), ylim = c(35, 36))
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path, use_plot_crs = TRUE)
+
+  ext <- canvas_extent(read_qgs(path))
+  # Expansion widens the range slightly, so compare loosely to the request.
+  expect_gt(ext[["xmin"]], -80.5)
+  expect_lt(ext[["xmin"]], -79.5)
+  expect_gt(ext[["xmax"]], -78.5)
+  expect_lt(ext[["xmax"]], -77.5)
+})
+
 test_that("the project CRS defaults to EPSG:3857", {
   nc <- read_nc()
   p <- ggplot2::ggplot(nc) +
