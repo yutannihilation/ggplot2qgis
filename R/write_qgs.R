@@ -38,6 +38,10 @@ QGS_MM_PER_LINEWIDTH <- 72.27 / 96
 #' a constant or a computed expression (e.g. `aes(fill = AREA * 2)`) is an
 #' error.
 #'
+#' The project opens zoomed to the plot's displayed range (the panel range,
+#' including the default expansion and any [ggplot2::coord_sf()] `xlim`/
+#' `ylim`), reprojected to the project CRS, rather than the whole world.
+#'
 #' @param plot A ggplot object. All layers must be backed by sf data.
 #' @param path Path of the `.qgs` file to write. Tilde paths (e.g. `~/x.qgs`)
 #'   are expanded.
@@ -173,10 +177,51 @@ write_qgs <- function(plot, path, use_plot_crs = FALSE,
     )
   }
 
+  # Open the project zoomed to the plot's displayed range instead of the
+  # template's whole-world extent.
+  panel <- built@layout$panel_params[[1]]
+  project_crs <- if (use_plot_crs) sf::st_crs(plot_crs) else sf::st_crs(3857L)
+  extent <- qgs_canvas_extent(panel, project_crs)
+
   project_srs <- if (use_plot_crs) resolve_srs(plot_crs)
-  qgs_write(qgs_layers, path, project_srs)
+  qgs_write(qgs_layers, path, project_srs, extent)
 
   invisible(path)
+}
+
+# The initial map-canvas extent reproducing what the plot displays.
+# ggplot2's panel range (`x_range`/`y_range`, already including the default
+# expansion and any coord_sf() xlim/ylim) is in the panel CRS; QGIS wants
+# the extent in the project CRS. When they differ, the rectangle is
+# densified before transforming so a curved reprojected edge is bounded by
+# its whole arc, not just the four corners. Returns c(xmin, ymin, xmax,
+# ymax), or NULL if the range is unavailable (keeping the world default).
+qgs_canvas_extent <- function(panel, project_crs) {
+  x_range <- panel$x_range
+  y_range <- panel$y_range
+  if (is.null(x_range) || is.null(y_range) ||
+      anyNA(x_range) || anyNA(y_range)) {
+    return(NULL)
+  }
+
+  src_crs <- sf::st_crs(panel$crs)
+  if (is.na(src_crs) || is.na(project_crs) || src_crs == project_crs) {
+    return(c(x_range[1L], y_range[1L], x_range[2L], y_range[2L]))
+  }
+
+  n <- 100L
+  xs <- seq(x_range[1L], x_range[2L], length.out = n)
+  ys <- seq(y_range[1L], y_range[2L], length.out = n)
+  ring <- rbind(
+    cbind(xs, y_range[1L]),
+    cbind(x_range[2L], ys),
+    cbind(rev(xs), y_range[2L]),
+    cbind(x_range[1L], rev(ys))
+  )
+  ring <- rbind(ring, ring[1L, , drop = FALSE])
+  poly <- sf::st_sfc(sf::st_polygon(list(ring)), crs = src_crs)
+  bbox <- sf::st_bbox(sf::st_transform(poly, project_crs))
+  as.numeric(bbox[c("xmin", "ymin", "xmax", "ymax")])
 }
 
 qgs_geometry_type <- function(d, i) {

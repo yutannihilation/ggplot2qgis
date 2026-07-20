@@ -33,9 +33,15 @@ splice <- function(out, anchor, replacement) {
 # vector_layer()/xyz_tile_layer(), bottom-most first. `project_srs` is the
 # CRS of the map canvas (a resolve_srs() result); if NULL, the template's
 # default (EPSG:3857) is kept. Layers whose SRS differs are reprojected on
-# the fly by QGIS.
-qgs_build <- function(layers, project_srs = NULL) {
+# the fly by QGIS. `extent` is the initial map-canvas view as
+# c(xmin, ymin, xmax, ymax) in the project CRS; if NULL, the template's
+# whole-world default is kept.
+qgs_build <- function(layers, project_srs = NULL, extent = NULL) {
   out <- splice(read_template(), "{{SAVE_DATETIME}}", qgs_now_iso8601())
+
+  if (!is.null(extent)) {
+    out <- write_canvas_extent(out, extent)
+  }
 
   if (!is.null(project_srs)) {
     w <- xml_writer(1L)
@@ -121,13 +127,53 @@ qgs_build <- function(layers, project_srs = NULL) {
   out
 }
 
+# Sets the initial map-canvas view. The template ships zoomed to the whole
+# world in both places QGIS reads on open: <mapcanvas>'s <extent> and
+# <ProjectViewSettings>'s <DefaultViewExtent> (attributes). `extent` is
+# c(xmin, ymin, xmax, ymax) in the project CRS. The world-extent literals
+# are used as splice anchors, so a template change that moves them fails
+# loudly rather than leaving the view unzoomed.
+write_canvas_extent <- function(out, extent) {
+  canvas_anchor <- paste0(
+    "    <extent>\n",
+    "      <xmin>-20037508.34278924390673637</xmin>\n",
+    "      <ymin>-20037508.34278924763202667</ymin>\n",
+    "      <xmax>20037508.34278924390673637</xmax>\n",
+    "      <ymax>20037508.34278924763202667</ymax>\n",
+    "    </extent>"
+  )
+  canvas_block <- paste0(
+    "    <extent>\n",
+    "      <xmin>", num(extent[1L]), "</xmin>\n",
+    "      <ymin>", num(extent[2L]), "</ymin>\n",
+    "      <xmax>", num(extent[3L]), "</xmax>\n",
+    "      <ymax>", num(extent[4L]), "</ymax>\n",
+    "    </extent>"
+  )
+  out <- splice(out, canvas_anchor, canvas_block)
+
+  view_anchor <- paste0(
+    "<DefaultViewExtent xmax=\"20037508.34278924390673637\"",
+    " xmin=\"-20037508.34278924390673637\"",
+    " ymax=\"20037508.34278924763202667\"",
+    " ymin=\"-20037508.34278924763202667\">"
+  )
+  view_block <- paste0(
+    "<DefaultViewExtent xmax=\"", num(extent[3L]), "\"",
+    " xmin=\"", num(extent[1L]), "\"",
+    " ymax=\"", num(extent[4L]), "\"",
+    " ymin=\"", num(extent[2L]), "\">"
+  )
+  splice(out, view_anchor, view_block)
+}
+
 # Writes the project to a .qgs file. Binary mode keeps LF newlines on
 # Windows and avoids re-encoding.
-qgs_write <- function(layers, path, project_srs = NULL) {
+qgs_write <- function(layers, path, project_srs = NULL, extent = NULL) {
   con <- file(path, open = "wb")
   on.exit(close(con))
   writeChar(
-    enc2utf8(qgs_build(layers, project_srs)),
+    enc2utf8(qgs_build(layers, project_srs, extent)),
     con,
     eos = NULL,
     useBytes = TRUE
