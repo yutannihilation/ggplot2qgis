@@ -1,0 +1,27 @@
+Package: ggplot2qgis
+Title: Export 'ggplot2' as 'QGIS' Project
+Version: 0.0.0.9000
+Authors@R:
+    c(person(given = "Hiroaki",
+             family = "Yutani",
+             role = c("aut", "cre"),
+             email = "yutani.ini@gmail.com",
+             comment = c(ORCID = "0000-0002-3385-7233")))
+Description: Convert a 'ggplot2'-based map plot (e.g. 'geom_sf()') into a 'QGIS' project ('.qgs') file.
+License: MIT + file LICENSE
+URL: https://github.com/yutannihilation/ggplot2qgis, https://yutannihilation.github.io/ggplot2qgis/
+BugReports: https://github.com/yutannihilation/ggplot2qgis/issues
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Imports:
+    ggplot2 (>= 4.0.0),
+    grDevices,
+    rlang,
+    sf (>= 1.0.0),
+    tools
+Suggests:
+    testthat (>= 3.0.0),
+    withr,
+    xml2
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.0.0

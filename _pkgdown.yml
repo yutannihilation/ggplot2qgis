@@ -1,0 +1,8 @@
+url: https://yutannihilation.github.io/ggplot2qgis/
+
+# Build into a dedicated dir rather than the default docs/, which here holds
+# the hand-written .qgs format notes (docs/qgs-format.md).
+destination: pkgdown-site
+
+template:
+  bootstrap: 5

@@ -1,0 +1,21 @@
+# R
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+*.Rproj
+
+# R CMD check / build artifacts
+*.tar.gz
+*.Rcheck/
+..Rcheck/
+
+# pkgdown site (built locally; deployed by CI)
+/docs-site/
+/pkgdown-site/
+
+# Scratch / working files (kept out of the repo)
+/.tmp/
+
+# macOS
+.DS_Store
