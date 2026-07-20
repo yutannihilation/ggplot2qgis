@@ -162,6 +162,100 @@ test_that("intermediate ramp stops are serialized into the colorramp", {
   )
 })
 
+test_that("a binned renderer has one explicit range per bin", {
+  # scale_fill_steps(breaks = c(0.08, 0.12, 0.2)) on nc AREA: unequal bins
+  # over 0.042..0.241 with the scale's exact bin colors.
+  style <- style_binned(
+    "AREA",
+    c(0.042, 0.08, 0.12, 0.2, 0.241),
+    cbind(
+      c(25L, 54L, 82L), c(37L, 79L, 115L), c(57L, 119L, 169L),
+      c(79L, 162L, 227L)
+    )
+  )
+  out <- render("Polygon", style)
+
+  expect_match(out, 'type="graduatedSymbol"', fixed = TRUE)
+  expect_match(out, 'attr="AREA"', fixed = TRUE)
+  expect_match(out, 'graduatedMethod="GraduatedColor"', fixed = TRUE)
+  expect_length(regmatches(out, gregexpr("<range ", out, fixed = TRUE))[[1]], 4L)
+  # Boundaries are the scale's exact bin edges, not equal intervals.
+  expect_match(out, 'lower="0.042000000000000"', fixed = TRUE)
+  expect_match(out, 'upper="0.080000000000000"', fixed = TRUE)
+  expect_match(out, 'lower="0.120000000000000"', fixed = TRUE)
+  expect_match(out, 'upper="0.241000000000000"', fixed = TRUE)
+  expect_match(out, 'label="0.042 - 0.08"', fixed = TRUE)
+  # Each bin keeps its exact color (no ramp interpolation).
+  expect_match(out, "25,54,82,255,rgb:", fixed = TRUE)
+  expect_match(out, "37,79,115,255,rgb:", fixed = TRUE)
+  expect_match(out, "57,119,169,255,rgb:", fixed = TRUE)
+  expect_match(out, "79,162,227,255,rgb:", fixed = TRUE)
+  # colorramp endpoints are the first/last bin colors.
+  expect_match(
+    out,
+    '<Option name="color1" type="QString" value="25,54,82,255,rgb:',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="color2" type="QString" value="79,162,227,255,rgb:',
+    fixed = TRUE
+  )
+})
+
+test_that("a single-bin style renders one range", {
+  style <- style_binned("x", c(0, 1), cbind(c(10L, 20L, 30L)))
+  out <- render("Polygon", style)
+  expect_length(regmatches(out, gregexpr("<range ", out, fixed = TRUE))[[1]], 1L)
+  expect_match(out, 'lower="0.000000000000000"', fixed = TRUE)
+  expect_match(out, 'upper="1.000000000000000"', fixed = TRUE)
+})
+
+test_that("a stroke target moves the bin colors to the outline", {
+  style <- style_binned(
+    "AREA", c(0, 0.5, 1),
+    cbind(c(10L, 20L, 30L), c(200L, 210L, 220L))
+  )
+  style <- style_set_stroke_target(style, c(229L, 229L, 229L))
+  out <- render("Polygon", style)
+
+  expect_match(
+    out,
+    '<Option name="outline_color" type="QString" value="10,20,30,255,rgb:',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="outline_color" type="QString" value="200,210,220,255,rgb:',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="color" type="QString" value="229,229,229,255,rgb:',
+    fixed = TRUE
+  )
+  expect_no_match(
+    out,
+    '<Option name="color" type="QString" value="10,20,30,255,rgb:',
+    fixed = TRUE
+  )
+})
+
+test_that("invalid binned styles are errors", {
+  expect_error(
+    style_binned("x", 0, matrix(integer(), nrow = 3)),
+    "at least 1 bin"
+  )
+  expect_error(
+    style_binned("x", c(0, 1, 1), cbind(c(0L, 0L, 0L), c(1L, 1L, 1L))),
+    "strictly ascending"
+  )
+  expect_error(
+    style_binned("x", c(0, 0.5, 1), cbind(c(0L, 0L, 0L))),
+    "matching lengths"
+  )
+})
+
 test_that("set_outline applies to every variant", {
   style <- style_single(c(229L, 229L, 229L))
   style <- style_set_outline(style, c(89L, 89L, 89L), 0.1505625)

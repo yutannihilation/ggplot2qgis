@@ -24,6 +24,9 @@ QGS_MM_PER_LINEWIDTH <- 72.27 / 96
 #' - a continuous `fill`/`colour` scale becomes a graduated renderer with
 #'   fine-grained equal-interval classes (or a continuously interpolated
 #'   color, see `gradient_style`),
+#' - a binned one (e.g. [ggplot2::scale_fill_steps()]) becomes a graduated
+#'   renderer with one class per bin, using the scale's exact bin
+#'   boundaries and colors,
 #' - a discrete one becomes a categorized renderer,
 #' - a layer with no `fill`/`colour` mapping becomes a single symbol with
 #'   the color ggplot2 would have used.
@@ -64,6 +67,9 @@ QGS_MM_PER_LINEWIDTH <- 72.27 / 96
 #'     only discoverable in the layer styling panel behind the
 #'     data-defined override of the symbol color, not in the renderer
 #'     dropdown.
+#'
+#'   Binned scales are unaffected: their bins are exact in a graduated
+#'   renderer, so there is nothing to trade off.
 #' @param overwrite If `FALSE` (the default), writing to a `path` that already
 #'   exists is an error. Set to `TRUE` to overwrite it.
 #' @returns `path`, invisibly.
@@ -281,7 +287,12 @@ qgs_vector_style <- function(plot, built, layer, i, d, gradient_style, geometry)
   }
 
   scale <- built@plot@scales$get_scales(aes_name)
-  style <- if (scale$is_discrete()) {
+  # ScaleBinned must be checked before is_discrete(): a binned scale is not
+  # discrete, but falling through to the gradient paths would smooth away
+  # the steps.
+  style <- if (inherits(scale, "ScaleBinned")) {
+    qgs_binned_style(scale, attribute, i)
+  } else if (scale$is_discrete()) {
     qgs_categorized_style(scale, attribute, i)
   } else if (gradient_style == "continuous") {
     qgs_continuous_style(scale, attribute, i)
@@ -379,6 +390,29 @@ qgs_continuous_style <- function(scale, attribute, i) {
     max = ramp$limits[2L],
     stops = list(offsets = ramp$offsets, colors = ramp$colors)
   )
+}
+
+# A trained binned scale (scale_fill_steps() etc.) as explicit bins: the
+# boundaries are the scale limits plus the inner breaks, and each bin's
+# color is what ggplot2 maps its midpoint to (constant within a bin).
+qgs_binned_style <- function(scale, attribute, i) {
+  limits <- scale$get_limits()
+  if (anyNA(limits) || limits[2L] <= limits[1L]) {
+    stop(
+      "layer ", i, ": cannot map `", attribute,
+      "` to binned colors (the scale's limits are degenerate)",
+      call. = FALSE
+    )
+  }
+
+  breaks <- scale$get_breaks()
+  # ggplot2 NA-s out-of-bounds breaks; also drop breaks sitting exactly on
+  # a limit so no zero-width bin is emitted.
+  breaks <- breaks[is.finite(breaks) & breaks > limits[1L] & breaks < limits[2L]]
+  boundaries <- c(limits[1L], sort(breaks), limits[2L])
+
+  mids <- (boundaries[-length(boundaries)] + boundaries[-1L]) / 2
+  style_binned(attribute, boundaries, grDevices::col2rgb(scale$map(mids)))
 }
 
 qgs_categorized_style <- function(scale, attribute, i) {

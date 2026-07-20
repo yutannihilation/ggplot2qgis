@@ -63,6 +63,18 @@ label_precision <- function(step) {
   as.integer(min(max(ceiling(log10(2 / step)), 1), 15))
 }
 
+# Number of label decimals that reproduce every bin boundary exactly: the
+# widest decimal part of their shortest plain-decimal form, clamped to
+# 1..15 like label_precision(). Used for binned styles, whose boundaries
+# are user-meaningful break values (unlike the computed equal-interval
+# bounds of a graduated style, where distinguishability is enough).
+exact_label_precision <- function(bounds) {
+  s <- num(bounds)
+  has_dot <- grepl(".", s, fixed = TRUE)
+  decimals <- ifelse(has_dot, nchar(sub(".*\\.", "", s)), 0L)
+  as.integer(min(max(decimals, 1L), 15L))
+}
+
 # Label for a graduated range, following the
 # <labelFormat format="%1 - %2" labelprecision="N" trimtrailingzeroes="1"/>
 # convention (e.g. "0 - 10", "9.5 - 19", "0.042 - 0.05").

@@ -7,6 +7,7 @@
 # A style is a plain named list with a `type` field:
 #   - "single":      color
 #   - "graduated":   attribute, classes, min, max, stops
+#   - "binned":      attribute, boundaries, colors
 #   - "continuous":  attribute, min, max, stops
 #   - "categorized": attribute, values, colors, catch_all
 # plus the shared fields target ("fill"/"stroke"), fill_color,
@@ -79,6 +80,38 @@ style_graduated <- function(attribute, classes, min, max, stops) {
     min = min,
     max = max,
     stops = stops,
+    target = "fill",
+    fill_color = QGS_DEFAULT_FILL_COLOR,
+    outline_color = QGS_DEFAULT_OUTLINE_COLOR,
+    outline_width = QGS_DEFAULT_OUTLINE_WIDTH
+  )
+}
+
+# Binned coloring of `attribute`: bin i covers boundaries[i] ..
+# boundaries[i + 1] and is drawn in colors[, i] as-is (no interpolation).
+# `boundaries` is a strictly ascending numeric vector of length n + 1,
+# `colors` a 3 x n integer matrix. Unlike a graduated style, the bins need
+# not be equal-width (e.g. ggplot2's scale_*_steps() with custom breaks).
+style_binned <- function(attribute, boundaries, colors) {
+  n <- length(boundaries) - 1L
+  if (n < 1L) {
+    stop("binned style needs at least 1 bin", call. = FALSE)
+  }
+  if (any(diff(boundaries) <= 0)) {
+    stop("bin boundaries must be strictly ascending", call. = FALSE)
+  }
+  if (n != ncol(colors)) {
+    stop(
+      "bin boundaries and colors must have matching lengths ",
+      "(n + 1 boundaries for n colors)",
+      call. = FALSE
+    )
+  }
+  list(
+    type = "binned",
+    attribute = attribute,
+    boundaries = boundaries,
+    colors = colors,
     target = "fill",
     fill_color = QGS_DEFAULT_FILL_COLOR,
     outline_color = QGS_DEFAULT_OUTLINE_COLOR,
@@ -440,6 +473,7 @@ write_renderer <- function(w, geom, style) {
     single = write_single_renderer(w, geom, style),
     continuous = write_continuous_renderer(w, geom, style),
     graduated = write_graduated_renderer(w, geom, style),
+    binned = write_binned_renderer(w, geom, style),
     categorized = write_categorized_renderer(w, geom, style),
     stop("unknown style type: ", style$type)
   )
@@ -551,6 +585,100 @@ write_graduated_renderer <- function(w, geom, style) {
     style$stops$colors[, 1L],
     style$stops$colors[, n_stops],
     stops_slice(style$stops, seq_len(n_stops)[-c(1L, n_stops)])
+  )
+  xw_start(w, "classificationMethod")
+  xw_attr(w, "id", "Pretty")
+  xw_empty(
+    w,
+    "symmetricMode",
+    c(astride = "0", enabled = "0", symmetrypoint = "0")
+  )
+  xw_empty(
+    w,
+    "labelFormat",
+    c(
+      format = "%1 - %2",
+      labelprecision = precision,
+      trimtrailingzeroes = "1"
+    )
+  )
+  xw_start(w, "parameters")
+  xw_empty(w, "Option")
+  xw_end(w) # parameters
+  xw_empty(w, "extraInformation")
+  xw_end(w) # classificationMethod
+  xw_empty(w, "rotation")
+  xw_empty(w, "sizescale")
+  write_data_defined_properties(w, "data-defined-properties")
+  xw_end(w) # renderer-v2
+}
+
+# A binned style is a graduated renderer too, but with the explicit
+# (possibly unequal) bin boundaries as the ranges and each bin's exact
+# color on its symbol, instead of equal intervals colored by sampling a
+# ramp.
+write_binned_renderer <- function(w, geom, style) {
+  boundaries <- style$boundaries
+  n <- length(boundaries) - 1L
+  precision <- exact_label_precision(boundaries)
+  xw_start(w, "renderer-v2")
+  xw_attr(w, "attr", style$attribute)
+  xw_attr(w, "enableorderby", "0")
+  xw_attr(w, "forceraster", "0")
+  xw_attr(w, "graduatedMethod", "GraduatedColor")
+  xw_attr(w, "referencescale", "-1")
+  xw_attr(w, "symbollevels", "0")
+  xw_attr(w, "type", "graduatedSymbol")
+  xw_start(w, "ranges")
+  for (i in seq_len(n)) {
+    xw_start(w, "range")
+    xw_attr(w, "label", range_label(boundaries[i], boundaries[i + 1L], precision))
+    xw_attr(w, "lower", sprintf("%.15f", boundaries[i]))
+    xw_attr(w, "render", "true")
+    xw_attr(w, "symbol", i - 1L)
+    xw_attr(w, "upper", sprintf("%.15f", boundaries[i + 1L]))
+    xw_attr(w, "uuid", paste0("{", qgs_uuid(), "}"))
+    xw_end(w)
+  }
+  xw_end(w) # ranges
+  xw_start(w, "symbols")
+  for (i in seq_len(n)) {
+    colors <- target_colors(
+      style$target,
+      style$colors[, i],
+      style$fill_color,
+      style$outline_color
+    )
+    write_symbol(
+      w, i - 1L, geom, colors$color, colors$outline, style$outline_width
+    )
+  }
+  xw_end(w) # symbols
+  xw_start(w, "source-symbol")
+  colors <- target_colors(
+    style$target,
+    style$colors[, 1L],
+    style$fill_color,
+    style$outline_color
+  )
+  write_symbol(
+    w, "0", geom, colors$color, colors$outline, style$outline_width
+  )
+  xw_end(w) # source-symbol
+  # The colorramp is only informational (used when re-classifying):
+  # first/last bin colors as the endpoints, the interior bin colors as
+  # control points at their bin midpoints rescaled to 0..1.
+  mid_stops <- NULL
+  if (n > 2L) {
+    interior <- seq(2L, n - 1L)
+    mids <- (boundaries[interior] + boundaries[interior + 1L]) / 2
+    mid_stops <- list(
+      offsets = (mids - boundaries[1L]) / (boundaries[n + 1L] - boundaries[1L]),
+      colors = style$colors[, interior, drop = FALSE]
+    )
+  }
+  write_gradient_colorramp(
+    w, style$colors[, 1L], style$colors[, n], mid_stops
   )
   xw_start(w, "classificationMethod")
   xw_attr(w, "id", "Pretty")

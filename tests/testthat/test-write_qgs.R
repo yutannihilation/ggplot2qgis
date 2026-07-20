@@ -119,6 +119,121 @@ test_that("an unknown gradient_style is an error", {
   )
 })
 
+test_that("a binned fill becomes one graduated class per bin", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA)) +
+    ggplot2::scale_fill_steps()
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path)
+
+  out <- read_qgs(path)
+  expect_match(out, 'type="graduatedSymbol"', fixed = TRUE)
+  expect_match(out, 'attr="AREA"', fixed = TRUE)
+
+  # One range per bin (breaks + 1), not the 25 gradient classes.
+  b <- ggplot2::ggplot_build(p)
+  s <- b@plot@scales$get_scales("fill")
+  limits <- s$get_limits()
+  breaks <- s$get_breaks()
+  breaks <- breaks[!is.na(breaks) & breaks > limits[1] & breaks < limits[2]]
+  n_bins <- length(breaks) + 1L
+  expect_length(
+    regmatches(out, gregexpr("<range ", out, fixed = TRUE))[[1]],
+    n_bins
+  )
+
+  # The range boundaries are the scale's bin edges...
+  boundaries <- c(limits[1], breaks, limits[2])
+  for (bound in boundaries) {
+    expect_match(out, sprintf('lower="%.15f"|upper="%.15f"', bound, bound))
+  }
+  # ...and each bin keeps the exact color ggplot2 assigned to it.
+  mids <- (head(boundaries, -1) + boundaries[-1]) / 2
+  bin_colors <- grDevices::col2rgb(s$map(mids))
+  for (i in seq_len(n_bins)) {
+    expect_match(
+      out,
+      paste0(paste(bin_colors[, i], collapse = ","), ",255,rgb:"),
+      fixed = TRUE
+    )
+  }
+})
+
+test_that("custom binned breaks carry over verbatim", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA)) +
+    ggplot2::scale_fill_steps(breaks = c(0.08, 0.12, 0.2))
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path)
+
+  out <- read_qgs(path)
+  # Unequal bins with the exact break values as boundaries.
+  expect_length(
+    regmatches(out, gregexpr("<range ", out, fixed = TRUE))[[1]],
+    4L
+  )
+  expect_match(out, 'lower="0.080000000000000"', fixed = TRUE)
+  expect_match(out, 'upper="0.120000000000000"', fixed = TRUE)
+  expect_match(out, 'lower="0.200000000000000"', fixed = TRUE)
+  # Labels show the user-chosen break values exactly.
+  expect_match(out, 'label="0.08 - 0.12"', fixed = TRUE)
+})
+
+test_that("a binned colour on polygons colors the borders", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(colour = AREA)) +
+    ggplot2::scale_colour_steps()
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path)
+
+  out <- read_qgs(path)
+  expect_match(out, 'type="graduatedSymbol"', fixed = TRUE)
+  # The bin colors drive the outline; the interior keeps the constant
+  # grey90 fill everywhere.
+  b <- ggplot2::ggplot_build(p)
+  s <- b@plot@scales$get_scales("colour")
+  limits <- s$get_limits()
+  low <- grDevices::col2rgb(s$map(limits[1] + 1e-9))[, 1]
+  expect_match(
+    out,
+    paste0(
+      '<Option name="outline_color" type="QString" value="',
+      paste(low, collapse = ","), ",255,rgb:"
+    ),
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="color" type="QString" value="229,229,229,255,rgb:',
+    fixed = TRUE
+  )
+})
+
+test_that("gradient_style does not affect binned scales", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA)) +
+    ggplot2::scale_fill_steps()
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path, gradient_style = "continuous")
+
+  out <- read_qgs(path)
+  # Bins are exact: still a graduated renderer, no expression.
+  expect_match(out, 'type="graduatedSymbol"', fixed = TRUE)
+  expect_no_match(out, "ramp_color", fixed = TRUE)
+})
+
 test_that("a discrete fill becomes a categorized style", {
   nc <- read_nc()
   nc$side <- ifelse(seq_len(nrow(nc)) %% 2 == 0, "even", "odd")
