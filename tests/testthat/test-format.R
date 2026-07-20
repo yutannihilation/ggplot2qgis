@@ -137,6 +137,15 @@ test_that("label precision scales with the class width", {
   expect_equal(label_precision(NA_real_), 1L)
 })
 
+test_that("exact label precision reproduces every boundary", {
+  expect_equal(exact_label_precision(c(0.042, 0.08, 0.12, 0.2, 0.241)), 3L)
+  expect_equal(exact_label_precision(c(0, 0.05, 0.1)), 2L)
+  # Integer boundaries keep the QGIS default of one decimal.
+  expect_equal(exact_label_precision(c(0, 10, 57)), 1L)
+  # Float noise is absorbed by num()'s 15-significant-digit form.
+  expect_equal(exact_label_precision(c(0, 0.30000000000000004, 1)), 1L)
+})
+
 test_that("qgs_uuid looks like a UUID and is unique", {
   id <- qgs_uuid()
   expect_equal(nchar(id), 36L)

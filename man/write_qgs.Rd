@@ -38,7 +38,11 @@ is a single swatch without any value labels, and the gradient is
 only discoverable in the layer styling panel behind the
 data-defined override of the symbol color, not in the renderer
 dropdown.
-}}
+}
+
+Binned scales are unaffected: their bins are exact in a graduated
+renderer, so there is nothing to trade off. Requesting \code{"continuous"}
+for a layer with a binned scale keeps the bins, with a warning.}
 
 \item{overwrite}{If \code{FALSE} (the default), writing to a \code{path} that already
 exists is an error. Set to \code{TRUE} to overwrite it.}
@@ -57,6 +61,9 @@ after the plot's trained color scale:
 \item a continuous \code{fill}/\code{colour} scale becomes a graduated renderer with
 fine-grained equal-interval classes (or a continuously interpolated
 color, see \code{gradient_style}),
+\item a binned one (e.g. \code{\link[ggplot2:scale_fill_steps]{ggplot2::scale_fill_steps()}}) becomes a graduated
+renderer with one class per bin, using the scale's exact bin
+boundaries and colors,
 \item a discrete one becomes a categorized renderer,
 \item a layer with no \code{fill}/\code{colour} mapping becomes a single symbol with
 the color ggplot2 would have used.
