@@ -60,6 +60,8 @@ QGS_MM_PER_LINEWIDTH <- 72.27 / 96
 #'     only discoverable in the layer styling panel behind the
 #'     data-defined override of the symbol color, not in the renderer
 #'     dropdown.
+#' @param overwrite If `FALSE` (the default), writing to a `path` that already
+#'   exists is an error. Set to `TRUE` to overwrite it.
 #' @returns `path`, invisibly.
 #' @examples
 #' library(ggplot2)
@@ -72,7 +74,8 @@ QGS_MM_PER_LINEWIDTH <- 72.27 / 96
 #' @importFrom rlang %||%
 #' @export
 write_qgs <- function(plot, path, use_plot_crs = FALSE,
-                      gradient_style = c("graduated", "continuous")) {
+                      gradient_style = c("graduated", "continuous"),
+                      overwrite = FALSE) {
   if (!inherits(plot, "ggplot")) {
     stop("`plot` must be a ggplot object, got ", class(plot)[1], call. = FALSE)
   }
@@ -83,9 +86,20 @@ write_qgs <- function(plot, path, use_plot_crs = FALSE,
   if (!isTRUE(use_plot_crs) && !isFALSE(use_plot_crs)) {
     stop("`use_plot_crs` must be TRUE or FALSE", call. = FALSE)
   }
+  if (!isTRUE(overwrite) && !isFALSE(overwrite)) {
+    stop("`overwrite` must be TRUE or FALSE", call. = FALSE)
+  }
   gradient_style <- match.arg(gradient_style)
 
   path <- path.expand(path)
+
+  if (!overwrite && file.exists(path)) {
+    stop(
+      "`path` already exists: ", path,
+      "\nSet `overwrite = TRUE` to overwrite it.",
+      call. = FALSE
+    )
+  }
 
   # Build the plot first so that the scales are trained by the data.
   built <- ggplot2::ggplot_build(plot)

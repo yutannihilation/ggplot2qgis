@@ -330,6 +330,29 @@ test_that("a non-logical use_plot_crs is an error", {
   expect_error(write_qgs(p, path, use_plot_crs = "yes"), "TRUE or FALSE")
 })
 
+test_that("writing to an existing path is an error unless overwrite = TRUE", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA))
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path)
+
+  expect_error(write_qgs(p, path), "already exists")
+  expect_invisible(write_qgs(p, path, overwrite = TRUE))
+})
+
+test_that("a non-logical overwrite is an error", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA))
+
+  path <- tempfile(fileext = ".qgs")
+  expect_error(write_qgs(p, path, overwrite = NA), "TRUE or FALSE")
+  expect_error(write_qgs(p, path, overwrite = "yes"), "TRUE or FALSE")
+})
+
 test_that("a tilde in the output path is expanded", {
   nc <- read_nc()
   p <- ggplot2::ggplot(nc) +

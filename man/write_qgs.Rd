@@ -8,7 +8,8 @@ write_qgs(
   plot,
   path,
   use_plot_crs = FALSE,
-  gradient_style = c("graduated", "continuous")
+  gradient_style = c("graduated", "continuous"),
+  overwrite = FALSE
 )
 }
 \arguments{
@@ -38,6 +39,9 @@ only discoverable in the layer styling panel behind the
 data-defined override of the symbol color, not in the renderer
 dropdown.
 }}
+
+\item{overwrite}{If \code{FALSE} (the default), writing to a \code{path} that already
+exists is an error. Set to \code{TRUE} to overwrite it.}
 }
 \value{
 \code{path}, invisibly.
