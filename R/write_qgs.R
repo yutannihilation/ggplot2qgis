@@ -69,7 +69,8 @@ QGS_MM_PER_LINEWIDTH <- 72.27 / 96
 #'     dropdown.
 #'
 #'   Binned scales are unaffected: their bins are exact in a graduated
-#'   renderer, so there is nothing to trade off.
+#'   renderer, so there is nothing to trade off. Requesting `"continuous"`
+#'   for a layer with a binned scale keeps the bins, with a warning.
 #' @param overwrite If `FALSE` (the default), writing to a `path` that already
 #'   exists is an error. Set to `TRUE` to overwrite it.
 #' @returns `path`, invisibly.
@@ -291,6 +292,15 @@ qgs_vector_style <- function(plot, built, layer, i, d, gradient_style, geometry)
   # discrete, but falling through to the gradient paths would smooth away
   # the steps.
   style <- if (inherits(scale, "ScaleBinned")) {
+    if (gradient_style == "continuous") {
+      # Per layer, not per plot: a mixed plot can have a continuous scale
+      # on another layer that the option legitimately applies to.
+      warning(
+        "layer ", i, ": `gradient_style = \"continuous\"` does not apply ",
+        "to a binned scale; the exact bins are kept",
+        call. = FALSE
+      )
+    }
     qgs_binned_style(scale, attribute, i)
   } else if (scale$is_discrete()) {
     qgs_categorized_style(scale, attribute, i)

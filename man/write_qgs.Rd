@@ -41,7 +41,8 @@ dropdown.
 }
 
 Binned scales are unaffected: their bins are exact in a graduated
-renderer, so there is nothing to trade off.}
+renderer, so there is nothing to trade off. Requesting \code{"continuous"}
+for a layer with a binned scale keeps the bins, with a warning.}
 
 \item{overwrite}{If \code{FALSE} (the default), writing to a \code{path} that already
 exists is an error. Set to \code{TRUE} to overwrite it.}

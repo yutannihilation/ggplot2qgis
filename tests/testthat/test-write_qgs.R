@@ -218,7 +218,7 @@ test_that("a binned colour on polygons colors the borders", {
   )
 })
 
-test_that("gradient_style does not affect binned scales", {
+test_that("gradient_style = 'continuous' on a binned scale warns and is ignored", {
   nc <- read_nc()
   p <- ggplot2::ggplot(nc) +
     ggplot2::geom_sf(ggplot2::aes(fill = AREA)) +
@@ -226,12 +226,40 @@ test_that("gradient_style does not affect binned scales", {
 
   dir <- local_out_dir()
   path <- file.path(dir, "proj.qgs")
-  write_qgs(p, path, gradient_style = "continuous")
+  expect_warning(
+    write_qgs(p, path, gradient_style = "continuous"),
+    "layer 1: `gradient_style = \"continuous\"` does not apply"
+  )
 
   out <- read_qgs(path)
   # Bins are exact: still a graduated renderer, no expression.
   expect_match(out, 'type="graduatedSymbol"', fixed = TRUE)
   expect_no_match(out, "ramp_color", fixed = TRUE)
+
+  # The default gradient_style stays silent.
+  expect_no_warning(write_qgs(p, file.path(dir, "proj2.qgs")))
+})
+
+test_that("the binned warning names only the binned layer in a mixed plot", {
+  nc <- read_nc()
+  # gradient_style = "continuous" legitimately applies to the continuous
+  # fill of layer 1; only the binned colour of layer 2 warns.
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA)) +
+    ggplot2::geom_sf(ggplot2::aes(colour = BIR74), fill = NA) +
+    ggplot2::scale_colour_steps()
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  expect_warning(
+    write_qgs(p, path, gradient_style = "continuous"),
+    "layer 2: `gradient_style = \"continuous\"` does not apply"
+  )
+
+  out <- read_qgs(path)
+  # Layer 1 still gets the expression-based continuous rendering.
+  expect_match(out, "ramp_color(create_ramp(map(", fixed = TRUE)
+  expect_match(out, 'type="graduatedSymbol"', fixed = TRUE)
 })
 
 test_that("a discrete fill becomes a categorized style", {
