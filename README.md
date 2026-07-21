@@ -51,6 +51,8 @@ or an XYZ URL template:
 write_qgs(p, "nc.qgs", basemap = "osm")
 ```
 
+![A ggplot2 map (front) and the exported QGIS project (back) showing the same North Carolina counties with the same fill colors over an OpenStreetMap basemap](man/figures/screenshot.png)
+
 See `?write_qgs` for the full set of options (`use_plot_crs`,
 `gradient_style`, `basemap`).
 
