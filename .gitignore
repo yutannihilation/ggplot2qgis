@@ -17,5 +17,8 @@
 # Scratch / working files (kept out of the repo)
 /.tmp/
 
+# sample data
+/samples/
+
 # macOS
 .DS_Store
