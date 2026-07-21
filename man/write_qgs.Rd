@@ -9,7 +9,8 @@ write_qgs(
   path,
   use_plot_crs = FALSE,
   gradient_style = c("graduated", "continuous"),
-  overwrite = FALSE
+  overwrite = FALSE,
+  layer_names = NULL
 )
 }
 \arguments{
@@ -46,6 +47,22 @@ for a layer with a binned scale keeps the bins, with a warning.}
 
 \item{overwrite}{If \code{FALSE} (the default), writing to a \code{path} that already
 exists is an error. Set to \code{TRUE} to overwrite it.}
+
+\item{layer_names}{Names for the layers, used for the GeoPackage files
+and in the QGIS layer tree: a character vector with one name per
+layer, bottom-most first. \code{/}, \verb{\\}, \code{|}, \code{:}, \code{*}, \verb{?}, \verb{"}, \code{<}, \code{>}
+and control characters cannot be used (the name becomes a file name).
+If \code{NULL} (the default), each layer is named after the first of these
+that applies:
+\itemize{
+\item the layer's own name (e.g. \code{geom_sf(name = "counties")}),
+\item the variable its data came from (e.g. \code{nc} for
+\code{geom_sf(data = nc)}, or for \code{ggplot(nc)} when the variable is
+unambiguous),
+\item the geom (e.g. \code{geom_sf}),
+}
+
+with a numbered suffix (\code{nc_2}) on collision.}
 }
 \value{
 \code{path}, invisibly.
