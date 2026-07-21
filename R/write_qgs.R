@@ -45,10 +45,12 @@ QGS_BASEMAPS <- list(
 
 #' Write a ggplot2 map plot as a QGIS project
 #'
-#' Converts a ggplot2 plot whose layers are drawn from sf objects into a
-#' QGIS project (`.qgs`) file. The data of each layer is saved as a
-#' GeoPackage under `<path minus extension>_data/`, and the layer is styled
-#' after the plot's trained color scale:
+#' Converts a ggplot2 plot whose layers are drawn from sf objects (or, for
+#' [ggplot2::geom_point()], [ggplot2::geom_path()], [ggplot2::geom_line()]
+#' and [ggplot2::geom_polygon()], from plain data frames) into a QGIS
+#' project (`.qgs`) file. The data of each layer is saved as a GeoPackage
+#' under `<path minus extension>_data/`, and the layer is styled after the
+#' plot's trained color scale:
 #'
 #' - a continuous `fill`/`colour` scale becomes a graduated renderer with
 #'   fine-grained equal-interval classes (or a continuously interpolated
@@ -70,11 +72,34 @@ QGS_BASEMAPS <- list(
 #' a constant or a computed expression (e.g. `aes(fill = AREA * 2)`) is an
 #' error.
 #'
+#' # Data frame layers
+#'
+#' A `geom_point()`, `geom_path()`, `geom_line()` or `geom_polygon()` layer
+#' drawn from a plain data frame is converted to an sf layer: one point per
+#' row, or one linestring/polygon per group (ggplot2's grouping — an
+#' explicit `group` aesthetic or the interaction of the discrete
+#' aesthetics; `geom_line()` orders each line by `x` like ggplot2 does,
+#' and polygon rings are closed). The plot must use [ggplot2::coord_sf()],
+#' and the `x`/`y` values are taken to be coordinates in the panel CRS:
+#' `coord_sf()`'s `crs` argument if given, otherwise the CRS of the first
+#' sf layer (`coord_sf(default_crs = )` is not supported). Like
+#' `fill`/`colour`, the `x`/`y` aesthetics must be bare column names, and
+#' the layer must use the identity stat and position.
+#'
+#' A point layer keeps every column of the data frame as attributes; a
+#' line/polygon layer keeps the columns that are constant within every
+#' group, one feature per group (a mapped `fill`/`colour` column must be
+#' constant within each group). `fill = NA`/`colour = NA` (including
+#' `geom_polygon()`'s default `colour`) render as "not drawn" in QGIS.
+#' The `size`, `shape`, `linetype` and `alpha` aesthetics are not carried
+#' over; those symbol properties keep the QGIS defaults.
+#'
 #' The project opens zoomed to the plot's displayed range (the panel range,
 #' including the default expansion and any [ggplot2::coord_sf()] `xlim`/
 #' `ylim`), reprojected to the project CRS, rather than the whole world.
 #'
-#' @param plot A ggplot object. All layers must be backed by sf data.
+#' @param plot A ggplot object. Each layer must be backed by sf data, or be
+#'   one of the supported data.frame geoms (see *Data frame layers*).
 #' @param path Path of the `.qgs` file to write. Tilde paths (e.g. `~/x.qgs`)
 #'   are expanded.
 #' @param use_plot_crs If `TRUE`, the project (map canvas) CRS is the plot's
@@ -171,6 +196,12 @@ write_qgs <- function(plot, path, use_plot_crs = FALSE,
     )
   }
 
+  # The raw data of each layer, validated before ggplot_build() so a bad
+  # layer fails with a specific error, not somewhere inside the build.
+  layer_data <- lapply(seq_along(layers), function(i) {
+    qgs_layer_data(plot, layers[[i]], i)
+  })
+
   # Build the plot first so that the scales are trained by the data.
   built <- ggplot2::ggplot_build(plot)
 
@@ -196,24 +227,10 @@ write_qgs <- function(plot, path, use_plot_crs = FALSE,
   for (i in seq_along(layers)) {
     layer <- layers[[i]]
 
-    # The raw data, not the computed data of ggplot_build(), which no
-    # longer has the original values.
-    d <- layer$data
-    if (is.null(d) || inherits(d, "waiver")) {
-      d <- plot@data
-    }
-    if (is.null(d) || inherits(d, "waiver")) {
-      stop("layer ", i, " has no data", call. = FALSE)
-    }
-    if (!inherits(d, "sf")) {
-      stop(
-        "layer ", i, ": only sf data is supported at the moment, got ",
-        class(d)[1],
-        call. = FALSE
-      )
-    }
-    if (nrow(d) == 0L) {
-      stop("layer ", i, ": the data has no rows", call. = FALSE)
+    d <- layer_data[[i]]
+    sf_data <- inherits(d, "sf")
+    if (!sf_data) {
+      d <- qgs_df_layer_sf(plot, built, layer, i, d)
     }
 
     crs <- sf::st_crs(d)
@@ -239,7 +256,9 @@ write_qgs <- function(plot, path, use_plot_crs = FALSE,
       layer_name,
       crs,
       geometry,
-      qgs_vector_style(plot, built, layer, i, d, gradient_style, geometry)
+      qgs_vector_style(
+        plot, built, layer, i, d, gradient_style, geometry, sf_data
+      )
     )
   }
 
@@ -259,6 +278,30 @@ write_qgs <- function(plot, path, use_plot_crs = FALSE,
   qgs_write(qgs_layers, path, project_srs, extent)
 
   invisible(path)
+}
+
+# The raw data of a layer (its own, or inherited from ggplot()) — not the
+# computed data of ggplot_build(), which no longer has the original
+# values. Must be an sf object or a data.frame with at least one row.
+qgs_layer_data <- function(plot, layer, i) {
+  d <- layer$data
+  if (is.null(d) || inherits(d, "waiver")) {
+    d <- plot@data
+  }
+  if (is.null(d) || inherits(d, "waiver")) {
+    stop("layer ", i, " has no data", call. = FALSE)
+  }
+  if (!is.data.frame(d)) {
+    stop(
+      "layer ", i, ": the layer data must be an sf object or a ",
+      "data.frame, got ", class(d)[1],
+      call. = FALSE
+    )
+  }
+  if (nrow(d) == 0L) {
+    stop("layer ", i, ": the data has no rows", call. = FALSE)
+  }
+  d
 }
 
 # Resolves the `basemap` argument to an xyz_tile_layer(), or NULL when no
@@ -473,10 +516,14 @@ qgs_geometry_type <- function(d, i) {
   )
 }
 
-# Resolves which aesthetic drives the color of the layer and returns the
-# matching style. The layer's mapping takes precedence over the
-# plot's, following how ggplot2 itself resolves aesthetics.
-qgs_vector_style <- function(plot, built, layer, i, d, gradient_style, geometry) {
+# Resolves which of `fill`/`colour` drives the varying color of a layer:
+# NULL when neither is mapped, else list(aes =, attribute =). The layer's
+# mapping takes precedence over the plot's, following how ggplot2 itself
+# resolves aesthetics. Only a bare column name is supported (the raw data
+# is what's written to the GeoPackage). Shared between the style
+# resolution below and the data.frame conversion (df_layer.R), which must
+# know the styled column to keep it in the per-group attributes.
+qgs_style_attribute <- function(plot, layer, i, d) {
   # aes() normalizes `color` to `colour`, so only these two keys exist.
   fill <- layer$mapping[["fill"]] %||% plot@mapping[["fill"]]
   colour <- layer$mapping[["colour"]] %||% plot@mapping[["colour"]]
@@ -487,15 +534,8 @@ qgs_vector_style <- function(plot, built, layer, i, d, gradient_style, geometry)
       call. = FALSE
     )
   }
-
-  const <- qgs_layer_constants(built@data[[i]])
-  # Rounded so binary float noise (0.15056250000000002) stays out of the
-  # project file.
-  outline_width <- round(const$linewidth * QGS_MM_PER_LINEWIDTH, 7)
-  is_polygon <- geometry == "Polygon"
-
   if (is.null(fill) && is.null(colour)) {
-    return(qgs_single_style(const, is_polygon, outline_width))
+    return(NULL)
   }
 
   aes_name <- if (is.null(fill)) "colour" else "fill"
@@ -515,6 +555,26 @@ qgs_vector_style <- function(plot, built, layer, i, d, gradient_style, geometry)
       call. = FALSE
     )
   }
+  list(aes = aes_name, attribute = attribute)
+}
+
+# Resolves the aesthetics of a layer into the matching style. `sf_data`
+# says whether the layer was sf originally (see qgs_layer_constants()).
+qgs_vector_style <- function(plot, built, layer, i, d, gradient_style,
+                             geometry, sf_data) {
+  mapped <- qgs_style_attribute(plot, layer, i, d)
+
+  const <- qgs_layer_constants(built@data[[i]], sf_defaults = sf_data)
+  # Rounded so binary float noise (0.15056250000000002) stays out of the
+  # project file.
+  outline_width <- round(const$linewidth * QGS_MM_PER_LINEWIDTH, 7)
+  is_polygon <- geometry == "Polygon"
+
+  if (is.null(mapped)) {
+    return(qgs_single_style(const, is_polygon, outline_width, i))
+  }
+  aes_name <- mapped$aes
+  attribute <- mapped$attribute
 
   scale <- built@plot@scales$get_scales(aes_name)
   # ScaleBinned must be checked before is_discrete(): a binned scale is not
@@ -560,15 +620,27 @@ qgs_vector_style <- function(plot, built, layer, i, d, gradient_style, geometry)
 
 # The constant aesthetics ggplot2 computed for a layer, taken from its
 # first feature (only meaningful for aesthetics that are not mapped).
-# The fallbacks are geom_sf()'s defaults.
-qgs_layer_constants <- function(computed) {
+# With `sf_defaults` (sf layers), NA is GeomSf's "use the per-geometry
+# default" sentinel, so it falls back to geom_sf()'s defaults. For
+# data.frame geoms the built values are theme-resolved and concrete, so
+# NA really means "not drawn" and becomes NULL; only a missing linewidth
+# (geom_point has none) keeps the 0.2 default, matching the marker
+# outline sf points get today.
+qgs_layer_constants <- function(computed, sf_defaults) {
   first_or <- function(name, default) {
     v <- computed[[name]]
     if (length(v) == 0L || is.na(v[[1L]])) default else v[[1L]]
   }
+  if (sf_defaults) {
+    return(list(
+      colour = first_or("colour", "grey35"),
+      fill = first_or("fill", "grey90"),
+      linewidth = first_or("linewidth", 0.2)
+    ))
+  }
   list(
-    colour = first_or("colour", "grey35"),
-    fill = first_or("fill", "grey90"),
+    colour = first_or("colour", NULL),
+    fill = first_or("fill", NULL),
     linewidth = first_or("linewidth", 0.2)
   )
 }
@@ -576,9 +648,19 @@ qgs_layer_constants <- function(computed) {
 # For a layer without a fill/colour mapping, reproduce ggplot2's constant
 # colors: interior + border for polygons; for lines and points the single
 # color is the stroke/marker color, with a matching ring (ggplot2 points
-# have no distinct border).
-qgs_single_style <- function(const, is_polygon, outline_width) {
+# have no distinct border). A NULL color means "not drawn", which only a
+# polygon's fill or an outline can express — a layer that would draw
+# nothing at all is an error.
+qgs_single_style <- function(const, is_polygon, outline_width, i) {
   main <- if (is_polygon) const$fill else const$colour
+  if (is.null(main) && (!is_polygon || is.null(const$colour))) {
+    stop(
+      "layer ", i, ": the layer would not be drawn (",
+      if (is_polygon) "both `fill` and `colour` are" else "`colour` is",
+      " NA)",
+      call. = FALSE
+    )
+  }
   style_set_outline(
     style_single(qgs_rgb(main)),
     qgs_rgb(const$colour),
@@ -668,6 +750,10 @@ qgs_categorized_style <- function(scale, attribute, i) {
   style_categorized(attribute, as.character(values), colors)
 }
 
+# NULL (or NA, its data.frame-layer source) stays NULL: "not drawn".
 qgs_rgb <- function(color) {
+  if (is.null(color) || is.na(color[[1L]])) {
+    return(NULL)
+  }
   grDevices::col2rgb(color)[, 1L]
 }

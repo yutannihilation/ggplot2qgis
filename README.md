@@ -57,9 +57,16 @@ See `?write_qgs` for the full set of options (`use_plot_crs`,
 
 ## Notes
 
-- All layers must be backed by sf data.
-- Only a bare column name is supported for the `fill`/`colour` aesthetics; a
-  constant or a computed expression (e.g. `aes(fill = AREA * 2)`) is an error.
+- Each layer must be backed by sf data, or be a `geom_point()`, `geom_path()`,
+  `geom_line()` or `geom_polygon()` layer drawn from a plain data frame. A
+  data frame layer is converted to sf (one point per row, or one
+  linestring/polygon per group); the plot must use `coord_sf()`, and the
+  `x`/`y` values are taken to be coordinates in the panel CRS (`coord_sf()`'s
+  `crs`, or the CRS of the first sf layer). See `?write_qgs` for the details
+  and constraints.
+- Only a bare column name is supported for the `fill`/`colour` (and a data
+  frame layer's `x`/`y`) aesthetics; a constant or a computed expression
+  (e.g. `aes(fill = AREA * 2)`) is an error.
 - Mapping both `fill` and `colour` on the same layer is not supported.
 
 ## Related

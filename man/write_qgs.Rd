@@ -15,7 +15,8 @@ write_qgs(
 )
 }
 \arguments{
-\item{plot}{A ggplot object. All layers must be backed by sf data.}
+\item{plot}{A ggplot object. Each layer must be backed by sf data, or be
+one of the supported data.frame geoms (see \emph{Data frame layers}).}
 
 \item{path}{Path of the \code{.qgs} file to write. Tilde paths (e.g. \verb{~/x.qgs})
 are expanded.}
@@ -85,10 +86,12 @@ the fly.}
 \code{path}, invisibly.
 }
 \description{
-Converts a ggplot2 plot whose layers are drawn from sf objects into a
-QGIS project (\code{.qgs}) file. The data of each layer is saved as a
-GeoPackage under \verb{<path minus extension>_data/}, and the layer is styled
-after the plot's trained color scale:
+Converts a ggplot2 plot whose layers are drawn from sf objects (or, for
+\code{\link[ggplot2:geom_point]{ggplot2::geom_point()}}, \code{\link[ggplot2:geom_path]{ggplot2::geom_path()}}, \code{\link[ggplot2:geom_line]{ggplot2::geom_line()}}
+and \code{\link[ggplot2:geom_polygon]{ggplot2::geom_polygon()}}, from plain data frames) into a QGIS
+project (\code{.qgs}) file. The data of each layer is saved as a GeoPackage
+under \verb{<path minus extension>_data/}, and the layer is styled after the
+plot's trained color scale:
 }
 \details{
 \itemize{
@@ -112,11 +115,33 @@ and \code{colour} on the same layer is not supported.
 Only a bare column name is supported for the \code{fill}/\code{colour} aesthetics;
 a constant or a computed expression (e.g. \code{aes(fill = AREA * 2)}) is an
 error.
+}
+\section{Data frame layers}{
+A \code{geom_point()}, \code{geom_path()}, \code{geom_line()} or \code{geom_polygon()} layer
+drawn from a plain data frame is converted to an sf layer: one point per
+row, or one linestring/polygon per group (ggplot2's grouping — an
+explicit \code{group} aesthetic or the interaction of the discrete
+aesthetics; \code{geom_line()} orders each line by \code{x} like ggplot2 does,
+and polygon rings are closed). The plot must use \code{\link[ggplot2:coord_sf]{ggplot2::coord_sf()}},
+and the \code{x}/\code{y} values are taken to be coordinates in the panel CRS:
+\code{coord_sf()}'s \code{crs} argument if given, otherwise the CRS of the first
+sf layer (\code{coord_sf(default_crs = )} is not supported). Like
+\code{fill}/\code{colour}, the \code{x}/\code{y} aesthetics must be bare column names, and
+the layer must use the identity stat and position.
+
+A point layer keeps every column of the data frame as attributes; a
+line/polygon layer keeps the columns that are constant within every
+group, one feature per group (a mapped \code{fill}/\code{colour} column must be
+constant within each group). \code{fill = NA}/\code{colour = NA} (including
+\code{geom_polygon()}'s default \code{colour}) render as "not drawn" in QGIS.
+The \code{size}, \code{shape}, \code{linetype} and \code{alpha} aesthetics are not carried
+over; those symbol properties keep the QGIS defaults.
 
 The project opens zoomed to the plot's displayed range (the panel range,
 including the default expansion and any \code{\link[ggplot2:coord_sf]{ggplot2::coord_sf()}} \code{xlim}/
 \code{ylim}), reprojected to the project CRS, rather than the whole world.
 }
+
 \examples{
 library(ggplot2)
 
