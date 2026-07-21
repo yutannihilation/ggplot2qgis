@@ -45,8 +45,15 @@ write_qgs(p, "nc.qgs")
 Open `nc.qgs` in QGIS: the polygons are rendered with the same fill gradient
 as the ggplot2 plot, and the data lives in `nc_data/`.
 
+To add an XYZ tile basemap below the layers, pass `basemap` a predefined key
+or an XYZ URL template:
+
+``` r
+write_qgs(p, "nc.qgs", basemap = "osm")
+```
+
 See `?write_qgs` for the full set of options (`use_plot_crs`,
-`gradient_style`).
+`gradient_style`, `basemap`).
 
 ## Notes
 

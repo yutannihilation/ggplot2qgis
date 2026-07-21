@@ -765,3 +765,107 @@ test_that("a plot without layers is an error", {
 test_that("a non-ggplot object is an error", {
   expect_error(write_qgs(1, tempfile(fileext = ".qgs")), "must be a ggplot")
 })
+
+test_that("no basemap is added by default", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA))
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path)
+
+  expect_no_match(read_qgs(path), "type=xyz", fixed = TRUE)
+})
+
+test_that("a predefined basemap adds an XYZ layer below the vector layers", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA))
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path, basemap = "osm")
+
+  out <- read_qgs(path)
+  expect_match(out, "type=xyz", fixed = TRUE)
+  expect_match(
+    out,
+    "url=https%3A%2F%2Ftile.openstreetmap.org%2F%7Bz%7D%2F%7Bx%7D%2F%7By%7D.png",
+    fixed = TRUE
+  )
+  expect_match(out, "&amp;zmax=19&amp;zmin=0", fixed = TRUE)
+  expect_match(out, 'name="OpenStreetMap"', fixed = TRUE)
+  # The basemap is a raster layer; the vector layer stays.
+  expect_match(out, 'type="raster"', fixed = TRUE)
+  expect_match(out, 'geometry="Polygon"', fixed = TRUE)
+
+  # The layer tree lists the top-most layer first, so the vector layer must
+  # come before the basemap (which draws at the bottom).
+  tree <- regmatches(
+    out, regexpr("<layer-tree-group>.*</layer-tree-group>", out)
+  )
+  expect_lt(
+    regexpr('name="nc"', tree, fixed = TRUE),
+    regexpr('name="OpenStreetMap"', tree, fixed = TRUE)
+  )
+})
+
+test_that("the GSI basemaps carry their Japanese names and URLs", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA))
+
+  dir <- local_out_dir()
+
+  path1 <- file.path(dir, "std.qgs")
+  write_qgs(p, path1, basemap = "gsi_standard")
+  out1 <- read_qgs(path1)
+  expect_match(out1, "cyberjapandata.gsi.go.jp%2Fxyz%2Fstd", fixed = TRUE)
+  expect_match(out1, "&amp;zmax=18&amp;zmin=0", fixed = TRUE)
+  expect_match(out1, "地理院タイル（標準地図）", fixed = TRUE)
+
+  path2 <- file.path(dir, "pale.qgs")
+  write_qgs(p, path2, basemap = "gsi_pale")
+  out2 <- read_qgs(path2)
+  expect_match(out2, "cyberjapandata.gsi.go.jp%2Fxyz%2Fpale", fixed = TRUE)
+  expect_match(out2, "地理院タイル（淡色地図）", fixed = TRUE)
+})
+
+test_that("an arbitrary XYZ URL is accepted as a basemap", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA))
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path, basemap = "https://example.com/tiles/{z}/{x}/{y}.png")
+
+  out <- read_qgs(path)
+  expect_match(out, "type=xyz", fixed = TRUE)
+  expect_match(
+    out,
+    "url=https%3A%2F%2Fexample.com%2Ftiles%2F%7Bz%7D%2F%7Bx%7D%2F%7By%7D.png",
+    fixed = TRUE
+  )
+  expect_match(out, 'name="basemap"', fixed = TRUE)
+})
+
+test_that("an invalid basemap is an error", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA))
+
+  path <- tempfile(fileext = ".qgs")
+  # An unknown key (no placeholders) lists the valid keys.
+  expect_error(write_qgs(p, path, basemap = "gsi"), "must be one of")
+  # A string missing the {z}/{x}/{y} placeholders.
+  expect_error(
+    write_qgs(p, path, basemap = "https://example.com/tiles.png"),
+    "must be one of"
+  )
+  # Not a single string.
+  expect_error(write_qgs(p, path, basemap = c("osm", "osm")), "single string")
+  expect_error(write_qgs(p, path, basemap = NA_character_), "single string")
+  expect_error(write_qgs(p, path, basemap = 1), "single string")
+})

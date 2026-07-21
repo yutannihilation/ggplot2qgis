@@ -20,6 +20,26 @@ QGS_MM_PER_LINEWIDTH <- 72.27 / 96
 # `|`, its delimiter, is out too).
 QGS_LAYER_NAME_FORBIDDEN <- "[/\\\\|:*?\"<>[:cntrl:]]"
 
+# Predefined XYZ basemaps `basemap` accepts by key. Each is the display
+# name, the {z}/{x}/{y} URL template, and the tile set's zoom range.
+QGS_BASEMAPS <- list(
+  osm = list(
+    name = "OpenStreetMap",
+    url = "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    zmin = 0L, zmax = 19L
+  ),
+  gsi_standard = list(
+    name = "地理院タイル（標準地図）",
+    url = "https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png",
+    zmin = 0L, zmax = 18L
+  ),
+  gsi_pale = list(
+    name = "地理院タイル（淡色地図）",
+    url = "https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png",
+    zmin = 0L, zmax = 18L
+  )
+)
+
 #' Write a ggplot2 map plot as a QGIS project
 #'
 #' Converts a ggplot2 plot whose layers are drawn from sf objects into a
@@ -77,6 +97,20 @@ QGS_LAYER_NAME_FORBIDDEN <- "[/\\\\|:*?\"<>[:cntrl:]]"
 #'   Binned scales are unaffected: their bins are exact in a graduated
 #'   renderer, so there is nothing to trade off. Requesting `"continuous"`
 #'   for a layer with a binned scale keeps the bins, with a warning.
+#' @param basemap An XYZ tile layer to add below the vector layers, or `NULL`
+#'   (the default) for none. Either a predefined key or an arbitrary XYZ URL
+#'   template (a string containing the `{z}`, `{x}` and `{y}` placeholders,
+#'   e.g. `"https://tile.openstreetmap.org/{z}/{x}/{y}.png"`). The predefined
+#'   keys are:
+#'
+#'   - `"osm"`: OpenStreetMap.
+#'   - `"gsi_standard"`: the GSI standard map
+#'     (<https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png>).
+#'   - `"gsi_pale"`: the GSI pale map
+#'     (<https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png>).
+#'
+#'   XYZ tiles are in EPSG:3857; QGIS reprojects them to the project CRS on
+#'   the fly.
 #' @param overwrite If `FALSE` (the default), writing to a `path` that already
 #'   exists is an error. Set to `TRUE` to overwrite it.
 #' @param layer_names Names for the layers, used for the GeoPackage files
@@ -106,7 +140,7 @@ QGS_LAYER_NAME_FORBIDDEN <- "[/\\\\|:*?\"<>[:cntrl:]]"
 #' @export
 write_qgs <- function(plot, path, use_plot_crs = FALSE,
                       gradient_style = c("graduated", "continuous"),
-                      overwrite = FALSE, layer_names = NULL) {
+                      overwrite = FALSE, layer_names = NULL, basemap = NULL) {
   if (!inherits(plot, "ggplot")) {
     stop("`plot` must be a ggplot object, got ", class(plot)[1], call. = FALSE)
   }
@@ -122,6 +156,7 @@ write_qgs <- function(plot, path, use_plot_crs = FALSE,
     stop("`overwrite` must be TRUE or FALSE", call. = FALSE)
   }
   gradient_style <- match.arg(gradient_style)
+  basemap_layer <- qgs_basemap_layer(basemap)
 
   path <- path.expand(path)
 
@@ -211,10 +246,46 @@ write_qgs <- function(plot, path, use_plot_crs = FALSE,
   project_crs <- if (use_plot_crs) sf::st_crs(plot_crs) else sf::st_crs(3857L)
   extent <- qgs_canvas_extent(panel, project_crs)
 
+  # The basemap draws under every vector layer, so it is the bottom-most
+  # entry (qgs_build() expects bottom-most first).
+  if (!is.null(basemap_layer)) {
+    qgs_layers <- c(list(basemap_layer), qgs_layers)
+  }
+
   project_srs <- if (use_plot_crs) resolve_srs(plot_crs)
   qgs_write(qgs_layers, path, project_srs, extent)
 
   invisible(path)
+}
+
+# Resolves the `basemap` argument to an xyz_tile_layer(), or NULL when no
+# basemap was requested. A predefined key (see QGS_BASEMAPS) wins; otherwise
+# the string must be an XYZ URL template with the {z}/{x}/{y} placeholders.
+qgs_basemap_layer <- function(basemap) {
+  if (is.null(basemap)) {
+    return(NULL)
+  }
+  if (!is.character(basemap) || length(basemap) != 1L || is.na(basemap)) {
+    stop("`basemap` must be a single string or NULL", call. = FALSE)
+  }
+
+  spec <- QGS_BASEMAPS[[basemap]]
+  if (!is.null(spec)) {
+    return(xyz_tile_layer(spec$name, spec$url, spec$zmin, spec$zmax))
+  }
+
+  # Not a known key: treat it as a URL template. Require the placeholders so
+  # a mistyped key fails loudly instead of producing a broken tile source.
+  if (!all(vapply(c("{z}", "{x}", "{y}"), grepl, logical(1L), basemap,
+                  fixed = TRUE))) {
+    stop(
+      "`basemap` must be one of ",
+      paste0('"', names(QGS_BASEMAPS), '"', collapse = ", "),
+      ", or an XYZ URL template containing {z}, {x} and {y}; got: ", basemap,
+      call. = FALSE
+    )
+  }
+  xyz_tile_layer("basemap", basemap, 0L, 19L)
 }
 
 # The name of every layer, bottom-most first. `layer_names` is the
