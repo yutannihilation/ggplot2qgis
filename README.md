@@ -2,6 +2,7 @@
 
 <!-- badges: start -->
 [![R-CMD-check](https://github.com/yutannihilation/ggplot2qgis/actions/workflows/R-CMD-check.yaml/badge.svg)](https://github.com/yutannihilation/ggplot2qgis/actions/workflows/R-CMD-check.yaml)
+[![ggplot2qgis status badge](https://yutannihilation.r-universe.dev/ggplot2qgis/badges/version)](https://yutannihilation.r-universe.dev/ggplot2qgis)
 <!-- badges: end -->
 
 Export a [ggplot2](https://ggplot2.tidyverse.org/) map plot (e.g. `geom_sf()`)
@@ -20,12 +21,10 @@ layer is styled after the plot's trained color scale:
 
 ## Installation
 
-You can install the development version from
-[GitHub](https://github.com/yutannihilation/ggplot2qgis) with:
+You can install ggplot2qgis via [R-universe](https://yutannihilation.r-universe.dev/ggplot2qgis):
 
 ``` r
-# install.packages("pak")
-pak::pak("yutannihilation/ggplot2qgis")
+install.packages("ggplot2qgis", repos = c("https://yutannihilation.r-universe.dev", "https://cloud.r-project.org"))
 ```
 
 ## Usage
