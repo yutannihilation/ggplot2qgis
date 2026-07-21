@@ -272,6 +272,53 @@ test_that("set_outline applies to every variant", {
   )
 })
 
+test_that("a NULL fill color renders the polygon fill as not drawn", {
+  style <- style_single(NULL)
+  style <- style_set_outline(style, c(0L, 0L, 0L), 0.2)
+  out <- render("Polygon", style)
+
+  expect_match(out, '<Option name="style" type="QString" value="no"/>',
+    fixed = TRUE
+  )
+  # The ignored color value stays at the QGIS default.
+  expect_match(
+    out,
+    '<Option name="color" type="QString" value="229,229,229,255,rgb:',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="outline_style" type="QString" value="solid"/>',
+    fixed = TRUE
+  )
+})
+
+test_that("a NULL outline color renders the outline as not drawn", {
+  style <- style_single(c(51L, 51L, 51L))
+  style <- style_set_outline(style, NULL, 0.2)
+
+  for (geom in c("Polygon", "Point")) {
+    out <- render(geom, style)
+    expect_match(
+      out,
+      '<Option name="outline_style" type="QString" value="no"/>',
+      fixed = TRUE
+    )
+    # The ignored color value stays at the QGIS default.
+    expect_match(
+      out,
+      '<Option name="outline_color" type="QString" value="35,35,35,255,rgb:',
+      fixed = TRUE
+    )
+    # The main color still draws.
+    expect_match(
+      out,
+      '<Option name="color" type="QString" value="51,51,51,255,rgb:',
+      fixed = TRUE
+    )
+  }
+})
+
 test_that("a stroke target moves the ramp to the outline", {
   style <- style_graduated(
     "AREA", 2, 0, 1,

@@ -1,18 +1,3 @@
-read_nc <- function() {
-  sf::st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
-}
-
-local_out_dir <- function(env = parent.frame()) {
-  dir <- tempfile("write_qgs_test")
-  dir.create(dir)
-  withr::defer(unlink(dir, recursive = TRUE), envir = env)
-  dir
-}
-
-read_qgs <- function(path) {
-  readChar(path, file.size(path), useBytes = TRUE)
-}
-
 test_that("a continuous fill becomes a graduated style", {
   nc <- read_nc()
   p <- ggplot2::ggplot(nc) +
@@ -715,14 +700,16 @@ test_that("a tilde in the output path is expanded", {
   expect_true(file.exists(file.path(dir, "proj_data", "nc.gpkg")))
 })
 
-test_that("non-sf data is an error", {
+test_that("non-data-frame data is an error", {
+  # A layer cannot be constructed with non-fortifiable data, so force it in.
   p <- ggplot2::ggplot(mtcars) +
     ggplot2::geom_point(ggplot2::aes(wt, mpg))
+  assign("data", as.matrix(mtcars), envir = p@layers[[1]])
 
   dir <- local_out_dir()
   expect_error(
     write_qgs(p, file.path(dir, "proj.qgs")),
-    "only sf data is supported"
+    "must be an sf object or a data.frame"
   )
 })
 

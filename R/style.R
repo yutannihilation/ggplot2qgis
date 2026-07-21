@@ -12,8 +12,10 @@
 #   - "categorized": attribute, values, colors, catch_all
 # plus the shared fields target ("fill"/"stroke"), fill_color,
 # outline_color and outline_width. A color is an integer vector c(r, g, b)
-# in 0..255; `stops` is list(offsets = <numeric n>, colors = <3 x n
-# integer matrix>) with offsets ascending from 0 to 1.
+# in 0..255, or NULL for "not drawn" (ggplot2's fill/colour = NA) where a
+# symbol supports it: a polygon's fill or any outline. `stops` is
+# list(offsets = <numeric n>, colors = <3 x n integer matrix>) with
+# offsets ascending from 0 to 1.
 
 QGS_DEFAULT_OUTLINE_COLOR <- c(35L, 35L, 35L)
 QGS_DEFAULT_OUTLINE_WIDTH <- 0.26
@@ -58,8 +60,8 @@ validate_color_stops <- function(stops) {
   invisible(stops)
 }
 
-# Single symbol with the given fill color, dark gray 0.26 mm outline
-# (QGIS defaults).
+# Single symbol with the given fill color (NULL = not drawn, polygons
+# only), dark gray 0.26 mm outline (QGIS defaults).
 style_single <- function(color) {
   list(
     type = "single",
@@ -171,9 +173,9 @@ style_categorized <- function(attribute, values, colors, catch_all = NULL) {
   )
 }
 
-# Sets the constant outline (stroke) color and width in millimeters. For a
-# style whose varying color targets the stroke, the width still applies
-# but the color is ignored.
+# Sets the constant outline (stroke) color (NULL = not drawn) and width in
+# millimeters. For a style whose varying color targets the stroke, the
+# width still applies but the color is ignored.
 style_set_outline <- function(style, color, width) {
   style$outline_color <- color
   style$outline_width <- width
@@ -253,22 +255,25 @@ write_data_defined_properties <- function(w, tag, property = NULL) {
 }
 
 # Options of the symbol layer (<Option type="Map"> children), sorted by
-# name as QGIS writes them.
+# name as QGIS writes them. A NULL fill (polygons) or outline color means
+# "not drawn": the style attribute becomes "no" and the color value keeps
+# the QGIS default, which QGIS ignores. A line's or marker's main color
+# cannot be NULL (there would be nothing to draw); callers guard that.
 symbol_options <- function(geom, color, outline_color, outline_width) {
   scale <- "3x:0,0,0,0,0,0"
   switch(geom,
     Polygon = list(
       border_width_map_unit_scale = scale,
-      color = qgis_color(color),
+      color = qgis_color(color %||% QGS_DEFAULT_FILL_COLOR),
       joinstyle = "bevel",
       offset = "0,0",
       offset_map_unit_scale = scale,
       offset_unit = "MM",
-      outline_color = qgis_color(outline_color),
-      outline_style = "solid",
+      outline_color = qgis_color(outline_color %||% QGS_DEFAULT_OUTLINE_COLOR),
+      outline_style = if (is.null(outline_color)) "no" else "solid",
       outline_width = num(outline_width),
       outline_width_unit = "MM",
-      style = "solid"
+      style = if (is.null(color)) "no" else "solid"
     ),
     LineString = list(
       align_dash_pattern = "0",
@@ -309,8 +314,8 @@ symbol_options <- function(geom, color, outline_color, outline_width) {
       offset = "0,0",
       offset_map_unit_scale = scale,
       offset_unit = "MM",
-      outline_color = qgis_color(outline_color),
-      outline_style = "solid",
+      outline_color = qgis_color(outline_color %||% QGS_DEFAULT_OUTLINE_COLOR),
+      outline_style = if (is.null(outline_color)) "no" else "solid",
       outline_width = num(outline_width),
       outline_width_map_unit_scale = scale,
       outline_width_unit = "MM",
