@@ -29,12 +29,15 @@ QGS_BASEMAPS <- list(
     zmin = 0L, zmax = 19L
   ),
   gsi_standard = list(
-    name = "地理院タイル（標準地図）",
+    # GSI standard map, name escaped so the R source stays ASCII (R CMD
+    # check warns on non-ASCII characters in code).
+    name = "\u5730\u7406\u9662\u30bf\u30a4\u30eb\uff08\u6a19\u6e96\u5730\u56f3\uff09",
     url = "https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png",
     zmin = 0L, zmax = 18L
   ),
   gsi_pale = list(
-    name = "地理院タイル（淡色地図）",
+    # GSI pale map (name is the escaped literal below).
+    name = "\u5730\u7406\u9662\u30bf\u30a4\u30eb\uff08\u6de1\u8272\u5730\u56f3\uff09",
     url = "https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png",
     zmin = 0L, zmax = 18L
   )
