@@ -14,6 +14,12 @@ QGS_GRADIENT_STOPS <- 21L
 # lwd units of 1/96 inch each, i.e. 72.27 / 96 mm.
 QGS_MM_PER_LINEWIDTH <- 72.27 / 96
 
+# Characters a layer name cannot contain: the name becomes the GeoPackage
+# file name (so path separators and the characters Windows forbids in file
+# names are out) and the `|layername=` part of the ogr datasource URI (so
+# `|`, its delimiter, is out too).
+QGS_LAYER_NAME_FORBIDDEN <- "[/\\\\|:*?\"<>[:cntrl:]]"
+
 #' Write a ggplot2 map plot as a QGIS project
 #'
 #' Converts a ggplot2 plot whose layers are drawn from sf objects into a
@@ -73,6 +79,20 @@ QGS_MM_PER_LINEWIDTH <- 72.27 / 96
 #'   for a layer with a binned scale keeps the bins, with a warning.
 #' @param overwrite If `FALSE` (the default), writing to a `path` that already
 #'   exists is an error. Set to `TRUE` to overwrite it.
+#' @param layer_names Names for the layers, used for the GeoPackage files
+#'   and in the QGIS layer tree: a character vector with one name per
+#'   layer, bottom-most first. `/`, `\`, `|`, `:`, `*`, `?`, `"`, `<`, `>`
+#'   and control characters cannot be used (the name becomes a file name).
+#'   If `NULL` (the default), each layer is named after the first of these
+#'   that applies:
+#'
+#'   - the layer's own name (e.g. `geom_sf(name = "counties")`),
+#'   - the variable its data came from (e.g. `nc` for
+#'     `geom_sf(data = nc)`, or for `ggplot(nc)` when the variable is
+#'     unambiguous),
+#'   - the geom (e.g. `geom_sf`),
+#'
+#'   with a numbered suffix (`nc_2`) on collision.
 #' @returns `path`, invisibly.
 #' @examples
 #' library(ggplot2)
@@ -86,7 +106,7 @@ QGS_MM_PER_LINEWIDTH <- 72.27 / 96
 #' @export
 write_qgs <- function(plot, path, use_plot_crs = FALSE,
                       gradient_style = c("graduated", "continuous"),
-                      overwrite = FALSE) {
+                      overwrite = FALSE, layer_names = NULL) {
   if (!inherits(plot, "ggplot")) {
     stop("`plot` must be a ggplot object, got ", class(plot)[1], call. = FALSE)
   }
@@ -94,6 +114,7 @@ write_qgs <- function(plot, path, use_plot_crs = FALSE,
   if (length(layers) == 0L) {
     stop("`plot` must have at least one layer", call. = FALSE)
   }
+  layer_names <- qgs_layer_names(plot, layer_names)
   if (!isTRUE(use_plot_crs) && !isFALSE(use_plot_crs)) {
     stop("`use_plot_crs` must be TRUE or FALSE", call. = FALSE)
   }
@@ -165,7 +186,7 @@ write_qgs <- function(plot, path, use_plot_crs = FALSE,
       plot_crs <- crs
     }
 
-    layer_name <- paste0("layer", i)
+    layer_name <- layer_names[[i]]
     gpkg_file <- paste0(layer_name, ".gpkg")
     gpkg_path <- file.path(data_dir, gpkg_file)
     if (file.exists(gpkg_path)) {
@@ -194,6 +215,140 @@ write_qgs <- function(plot, path, use_plot_crs = FALSE,
   qgs_write(qgs_layers, path, project_srs, extent)
 
   invisible(path)
+}
+
+# The name of every layer, bottom-most first. `layer_names` is the
+# user-supplied override (already documented in write_qgs()); NULL means
+# derive a name per layer:
+#
+# 1. the ggplot2 layer name (user-set, so a forbidden character is an
+#    error, like in `layer_names`),
+# 2. the variable the data came from,
+# 3. the geom that created the layer,
+# 4. "layer<i>",
+#
+# where 2.-4. are derived, so they are silently sanitized instead. A name
+# colliding with an earlier one gets a "_2", "_3", ... suffix.
+qgs_layer_names <- function(plot, layer_names) {
+  layers <- plot@layers
+  n <- length(layers)
+
+  if (!is.null(layer_names)) {
+    if (!is.character(layer_names) || length(layer_names) != n) {
+      stop(
+        "`layer_names` must be a character vector with one name per layer (",
+        n, ")",
+        call. = FALSE
+      )
+    }
+    if (anyNA(layer_names) || !all(nzchar(layer_names))) {
+      stop("`layer_names` must not contain NA or empty names", call. = FALSE)
+    }
+    if (anyDuplicated(layer_names)) {
+      stop("`layer_names` must be unique", call. = FALSE)
+    }
+    qgs_check_layer_name(layer_names, "`layer_names`")
+    return(layer_names)
+  }
+
+  out <- character(n)
+  for (i in seq_len(n)) {
+    name <- layers[[i]]$name
+    if (!is.null(name)) {
+      qgs_check_layer_name(name, paste0("layer ", i, ": the layer name"))
+    } else {
+      name <- qgs_derived_layer_name(plot, layers[[i]], i)
+    }
+    out[[i]] <- qgs_uncollide_name(name, out[seq_len(i - 1L)])
+  }
+  out
+}
+
+qgs_check_layer_name <- function(names, what) {
+  bad <- grepl(QGS_LAYER_NAME_FORBIDDEN, names)
+  if (any(bad)) {
+    stop(
+      what, " cannot contain any of /\\|:*?\"<> or control characters: ",
+      names[bad][1L],
+      call. = FALSE
+    )
+  }
+}
+
+qgs_derived_layer_name <- function(plot, layer, i) {
+  # The layer's constructor is the geom call as the user wrote it, so a
+  # bare symbol passed as its `data` argument is the variable name (`data`
+  # is never positional: `mapping` comes first in every geom).
+  cons <- layer$constructor
+  if (is.call(cons)) {
+    data_arg <- rlang::call_args(cons)[["data"]]
+    if (rlang::is_symbol(data_arg)) {
+      return(qgs_sanitize_layer_name(rlang::as_string(data_arg), i))
+    }
+  }
+
+  # The variable the layer's data (own or inherited from ggplot()) is
+  # bound to in the environment the plot was created in, e.g. `nc` for
+  # ggplot(nc). Only when the match is unambiguous; a guess is worse
+  # than the geom fallback.
+  d <- layer$data
+  if (is.null(d) || inherits(d, "waiver")) {
+    d <- plot@data
+  }
+  name <- qgs_data_binding_name(d, plot@plot_env)
+  if (!is.null(name)) {
+    return(qgs_sanitize_layer_name(name, i))
+  }
+
+  if (is.call(cons)) {
+    fn <- rlang::call_name(cons)
+    if (!is.null(fn)) {
+      return(qgs_sanitize_layer_name(fn, i))
+    }
+  }
+
+  paste0("layer", i)
+}
+
+# The single variable in `env` (not its parents) bound to exactly `d`, or
+# NULL if there is none or more than one. Bindings that cannot be read
+# (e.g. an active binding that errors) are skipped.
+qgs_data_binding_name <- function(d, env) {
+  if (!is.data.frame(d) || !is.environment(env)) {
+    return(NULL)
+  }
+  hit <- NULL
+  for (name in ls(env, sorted = TRUE)) {
+    obj <- tryCatch(
+      get(name, envir = env, inherits = FALSE),
+      error = function(e) NULL
+    )
+    if (identical(obj, d)) {
+      if (!is.null(hit)) {
+        return(NULL)
+      }
+      hit <- name
+    }
+  }
+  hit
+}
+
+qgs_sanitize_layer_name <- function(name, i) {
+  name <- gsub(QGS_LAYER_NAME_FORBIDDEN, "_", name)
+  # A leading dot would hide the .gpkg file; Windows forbids a trailing one.
+  name <- gsub("^[ .]+|[ .]+$", "", name)
+  if (nzchar(name)) name else paste0("layer", i)
+}
+
+qgs_uncollide_name <- function(name, taken) {
+  if (!name %in% taken) {
+    return(name)
+  }
+  k <- 2L
+  while (paste0(name, "_", k) %in% taken) {
+    k <- k + 1L
+  }
+  paste0(name, "_", k)
 }
 
 # The initial map-canvas extent reproducing what the plot displays.

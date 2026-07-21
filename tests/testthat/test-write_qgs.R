@@ -23,10 +23,10 @@ test_that("a continuous fill becomes a graduated style", {
   expect_invisible(write_qgs(p, path))
 
   expect_true(file.exists(path))
-  expect_true(file.exists(file.path(dir, "proj_data", "layer1.gpkg")))
+  expect_true(file.exists(file.path(dir, "proj_data", "nc.gpkg")))
 
   out <- read_qgs(path)
-  expect_match(out, "proj_data/layer1.gpkg|layername=layer1", fixed = TRUE)
+  expect_match(out, "proj_data/nc.gpkg|layername=nc", fixed = TRUE)
   expect_match(out, 'type="graduatedSymbol"', fixed = TRUE)
   expect_match(out, 'attr="AREA"', fixed = TRUE)
   expect_match(out, 'geometry="Polygon"', fixed = TRUE)
@@ -73,8 +73,8 @@ test_that("the written gpkg keeps the raw data", {
   write_qgs(p, file.path(dir, "proj.qgs"))
 
   d <- sf::st_read(
-    file.path(dir, "proj_data", "layer1.gpkg"),
-    layer = "layer1",
+    file.path(dir, "proj_data", "nc.gpkg"),
+    layer = "nc",
     quiet = TRUE
   )
   expect_equal(nrow(d), nrow(nc))
@@ -396,8 +396,8 @@ test_that("each layer gets its own gpkg, bottom-most first", {
   path <- file.path(dir, "proj.qgs")
   write_qgs(p, path)
 
-  expect_true(file.exists(file.path(dir, "proj_data", "layer1.gpkg")))
-  expect_true(file.exists(file.path(dir, "proj_data", "layer2.gpkg")))
+  expect_true(file.exists(file.path(dir, "proj_data", "nc.gpkg")))
+  expect_true(file.exists(file.path(dir, "proj_data", "points.gpkg")))
 
   out <- read_qgs(path)
   expect_match(out, 'geometry="Polygon"', fixed = TRUE)
@@ -406,9 +406,110 @@ test_that("each layer gets its own gpkg, bottom-most first", {
   # (ggplot2's last layer) must come before the polygons.
   tree <- regmatches(out, regexpr("<layer-tree-group>.*</layer-tree-group>", out))
   expect_lt(
-    regexpr('name="layer2"', tree, fixed = TRUE),
-    regexpr('name="layer1"', tree, fixed = TRUE)
+    regexpr('name="points"', tree, fixed = TRUE),
+    regexpr('name="nc"', tree, fixed = TRUE)
   )
+})
+
+test_that("a layer whose data is passed as a symbol is named after it", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot() +
+    ggplot2::geom_sf(data = nc)
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path)
+
+  expect_true(file.exists(file.path(dir, "proj_data", "nc.gpkg")))
+  expect_match(read_qgs(path), "|layername=nc", fixed = TRUE)
+})
+
+test_that("a ggplot2 layer name wins over the data variable", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot() +
+    ggplot2::geom_sf(data = nc, name = "counties")
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path)
+
+  expect_true(file.exists(file.path(dir, "proj_data", "counties.gpkg")))
+  expect_match(read_qgs(path), "|layername=counties", fixed = TRUE)
+})
+
+test_that("layer_names overrides every derived name", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA)) +
+    ggplot2::geom_sf(data = nc, name = "counties")
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path, layer_names = c("base", "top"))
+
+  expect_true(file.exists(file.path(dir, "proj_data", "base.gpkg")))
+  expect_true(file.exists(file.path(dir, "proj_data", "top.gpkg")))
+  out <- read_qgs(path)
+  expect_match(out, "|layername=base", fixed = TRUE)
+  expect_match(out, "|layername=top", fixed = TRUE)
+})
+
+test_that("an invalid layer_names is an error", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA))
+
+  path <- tempfile(fileext = ".qgs")
+  # One name per layer.
+  expect_error(write_qgs(p, path, layer_names = c("a", "b")), "one name per layer")
+  expect_error(write_qgs(p, path, layer_names = 1), "one name per layer")
+  expect_error(write_qgs(p, path, layer_names = NA_character_), "NA or empty")
+  expect_error(write_qgs(p, path, layer_names = ""), "NA or empty")
+  expect_error(write_qgs(p, path, layer_names = "a|b"), "cannot contain")
+
+  p2 <- p + ggplot2::geom_sf(data = nc)
+  expect_error(
+    write_qgs(p2, tempfile(fileext = ".qgs"), layer_names = c("a", "a")),
+    "must be unique"
+  )
+})
+
+test_that("a ggplot2 layer name with a forbidden character is an error", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot() +
+    ggplot2::geom_sf(data = nc, name = "a|b")
+
+  expect_error(write_qgs(p, tempfile(fileext = ".qgs")), "cannot contain")
+})
+
+test_that("colliding derived names get a numbered suffix", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot() +
+    ggplot2::geom_sf(data = nc) +
+    ggplot2::geom_sf(data = nc)
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path)
+
+  expect_true(file.exists(file.path(dir, "proj_data", "nc.gpkg")))
+  expect_true(file.exists(file.path(dir, "proj_data", "nc_2.gpkg")))
+  expect_match(read_qgs(path), "|layername=nc_2", fixed = TRUE)
+})
+
+test_that("inline data falls back to the geom name", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot() +
+    ggplot2::geom_sf(
+      data = sf::st_sf(geometry = sf::st_centroid(sf::st_geometry(nc)))
+    )
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path)
+
+  expect_true(file.exists(file.path(dir, "proj_data", "geom_sf.gpkg")))
+  expect_match(read_qgs(path), "|layername=geom_sf", fixed = TRUE)
 })
 
 project_crs_block <- function(out) {
@@ -611,7 +712,7 @@ test_that("a tilde in the output path is expanded", {
   write_qgs(p, "~/proj.qgs")
 
   expect_true(file.exists(file.path(dir, "proj.qgs")))
-  expect_true(file.exists(file.path(dir, "proj_data", "layer1.gpkg")))
+  expect_true(file.exists(file.path(dir, "proj_data", "nc.gpkg")))
 })
 
 test_that("non-sf data is an error", {
