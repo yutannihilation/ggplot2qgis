@@ -6,7 +6,6 @@ name: pkgdown
 on:
   push:
     branches: [main]
-  pull_request:
   workflow_dispatch:
 
 # Only one Pages deployment at a time.
@@ -47,12 +46,10 @@ jobs:
         shell: Rscript {0}
 
       - name: Upload Pages artifact
-        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v5
         with:
           path: pkgdown-site
 
       - name: Deploy to GitHub Pages
-        if: github.event_name != 'pull_request'
         id: deployment
         uses: actions/deploy-pages@v5

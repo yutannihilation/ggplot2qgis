@@ -10,7 +10,8 @@ write_qgs(
   use_plot_crs = FALSE,
   gradient_style = c("graduated", "continuous"),
   overwrite = FALSE,
-  layer_names = NULL
+  layer_names = NULL,
+  basemap = NULL
 )
 }
 \arguments{
@@ -63,6 +64,22 @@ unambiguous),
 }
 
 with a numbered suffix (\code{nc_2}) on collision.}
+
+\item{basemap}{An XYZ tile layer to add below the vector layers, or \code{NULL}
+(the default) for none. Either a predefined key or an arbitrary XYZ URL
+template (a string containing the \code{{z}}, \code{{x}} and \code{{y}} placeholders,
+e.g. \code{"https://tile.openstreetmap.org/{z}/{x}/{y}.png"}). The predefined
+keys are:
+\itemize{
+\item \code{"osm"}: OpenStreetMap.
+\item \code{"gsi_standard"}: the GSI standard map
+(\url{https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png}).
+\item \code{"gsi_pale"}: the GSI pale map
+(\url{https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png}).
+}
+
+XYZ tiles are in EPSG:3857; QGIS reprojects them to the project CRS on
+the fly.}
 }
 \value{
 \code{path}, invisibly.
