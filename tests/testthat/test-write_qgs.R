@@ -691,6 +691,10 @@ test_that("a tilde in the output path is expanded", {
   p <- ggplot2::ggplot(nc) +
     ggplot2::geom_sf(ggplot2::aes(fill = AREA))
 
+  # On Windows, path.expand() resolves "~" to the personal folder determined
+  # at R startup, so it cannot be redirected by setting HOME at runtime.
+  skip_on_os("windows")
+
   dir <- local_out_dir()
   withr::local_envvar(HOME = dir)
 
