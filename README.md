@@ -56,27 +56,10 @@ write_qgs(p, "nc.qgs", basemap = "osm")
 See `?write_qgs` for the full set of options (`use_plot_crs`,
 `gradient_style`, `basemap`).
 
-## Notes
+## TODOs
 
-- Each layer must be backed by sf data, or be a `geom_point()`, `geom_path()`,
-  `geom_line()` or `geom_polygon()` layer drawn from a plain data frame. A
-  data frame layer is converted to sf (one point per row, or one
-  linestring/polygon per group); the plot must use `coord_sf()`, and the
-  `x`/`y` values are taken to be coordinates in the panel CRS (`coord_sf()`'s
-  `crs`, or the CRS of the first sf layer). See `?write_qgs` for the details
-  and constraints.
-- Only a bare column name is supported for the `fill`/`colour` (and a data
-  frame layer's `x`/`y`) aesthetics; a constant or a computed expression
-  (e.g. `aes(fill = AREA * 2)`) is an error.
-- Mapping both `fill` and `colour` on the same layer is not supported.
-
-## Related
-
-This R package is a port of the Rust crate
-[generate-qgs](https://github.com/yutannihilation/generate-qgs), which
-generates `.qgs` files programmatically. The `.qgs` file format itself is
-documented in [`docs/qgs-format.md`](docs/qgs-format.md).
-
-## License
-
-MIT © Hiroaki Yutani
+- [ ] Support labels
+- [ ] Support tidyterra
+  - [ ] vector
+  - [ ] raster
+- [ ] Support tmap
