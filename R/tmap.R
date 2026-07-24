@@ -38,7 +38,7 @@ QGS_TMAP_SCALE_FUNS <- c(
 write_qgs.tmap <- function(plot, path, use_plot_crs = TRUE,
                            gradient_style = c("graduated", "continuous"),
                            overwrite = FALSE, layer_names = NULL,
-                           basemap = NULL, ...) {
+                           basemap = NULL, create_na_layer = TRUE, ...) {
   rlang::check_dots_empty()
   qgs_tmap_check()
   if (!isTRUE(use_plot_crs) && !isFALSE(use_plot_crs)) {
@@ -46,6 +46,9 @@ write_qgs.tmap <- function(plot, path, use_plot_crs = TRUE,
   }
   if (!isTRUE(overwrite) && !isFALSE(overwrite)) {
     stop("`overwrite` must be TRUE or FALSE", call. = FALSE)
+  }
+  if (!isTRUE(create_na_layer) && !isFALSE(create_na_layer)) {
+    stop("`create_na_layer` must be TRUE or FALSE", call. = FALSE)
   }
   gradient_style <- match.arg(gradient_style)
   basemap_arg_layer <- qgs_basemap_layer(basemap)
@@ -60,7 +63,7 @@ write_qgs.tmap <- function(plot, path, use_plot_crs = TRUE,
   }
 
   built <- qgs_tmap_build(plot)
-  specs <- qgs_tmap_layer_specs(built, gradient_style)
+  specs <- qgs_tmap_layer_specs(built, gradient_style, create_na_layer)
   names <- qgs_tmap_layer_names(specs, layer_names)
 
   basemap_layers <- qgs_tmap_basemap_layers(built)
@@ -83,7 +86,8 @@ write_qgs.tmap <- function(plot, path, use_plot_crs = TRUE,
   # Layers sharing one tm_shape share one GeoPackage: the group's data is
   # written once (named after its first layer) and later layers of the
   # group reference the same table under their own display name.
-  qgs_layers <- vector("list", length(specs))
+  qgs_layers <- list()
+  taken_names <- names
   written <- list()
   for (i in seq_along(specs)) {
     spec <- specs[[i]]
@@ -100,15 +104,36 @@ write_qgs.tmap <- function(plot, path, use_plot_crs = TRUE,
       info <- list(file = gpkg_file, table = layer_name)
       written[[group_key]] <- info
     }
+    gpkg_rel <- paste0(data_dir_name, "/", info$file) # relative to the .qgs
 
-    qgs_layers[[i]] <- vector_layer(
-      # relative to the project file
-      paste0(data_dir_name, "/", info$file),
+    # The missing-value layer draws directly below its parent
+    # (qgs_build() expects bottom-most first): same GeoPackage table,
+    # filtered to the NULL attribute values.
+    if (!is.null(spec$na)) {
+      na_name <- qgs_uncollide_name(
+        paste0(layer_name, " (missing value)"),
+        taken_names
+      )
+      taken_names <- c(taken_names, na_name)
+      qgs_layers[[length(qgs_layers) + 1L]] <- vector_layer(
+        gpkg_rel,
+        na_name,
+        sf::st_crs(spec$data),
+        spec$geometry,
+        spec$na$style,
+        table = info$table,
+        subset = spec$na$subset
+      )
+    }
+
+    qgs_layers[[length(qgs_layers) + 1L]] <- vector_layer(
+      gpkg_rel,
       layer_name,
       sf::st_crs(spec$data),
       spec$geometry,
       spec$style,
-      table = info$table
+      table = info$table,
+      subset = spec$subset
     )
   }
 
@@ -192,7 +217,7 @@ qgs_tmap_build <- function(x) {
 # list(data = <sf>, name = <default layer name>, geometry =, style =).
 # Anything that cannot be represented faithfully in a QGIS project is an
 # error, never silently dropped.
-qgs_tmap_layer_specs <- function(built, gradient_style) {
+qgs_tmap_layer_specs <- function(built, gradient_style, create_na_layer) {
   x2 <- built$x2
   x3 <- built$x3
 
@@ -218,7 +243,7 @@ qgs_tmap_layer_specs <- function(built, gradient_style) {
       lyr <- x3$tmo[[gi]]$layers[[li]]
       tml <- x2$tmo[[gi]]$tmls[[li]]
       spec <- qgs_tmap_layer_spec(
-        built, d, tms, lyr, tml, i, gradient_style
+        built, d, tms, lyr, tml, i, gradient_style, create_na_layer
       )
       if (!is.null(spec)) {
         spec$group <- gi
@@ -282,8 +307,11 @@ qgs_tmap_layer_label <- function(lyr) {
   gsub("^tm_data_", "tm_", lyr$mapping_fun[[1L]])
 }
 
-# One layer of one shape group -> a spec for vector_layer().
-qgs_tmap_layer_spec <- function(built, d, tms, lyr, tml, i, gradient_style) {
+# One layer of one shape group -> a spec for vector_layer(): the sf data,
+# the default name, geometry, style, an optional datasource `subset`, and
+# an optional `na` sub-spec (style + subset) for the missing-value layer.
+qgs_tmap_layer_spec <- function(built, d, tms, lyr, tml, i, gradient_style,
+                                create_na_layer) {
   mfun <- lyr$mapping_fun
   kind <- if ("tm_data_polygons" %in% mfun) {
     "polygons"
@@ -368,24 +396,96 @@ qgs_tmap_layer_spec <- function(built, d, tms, lyr, tml, i, gradient_style) {
   # Rounded so binary float noise stays out of the project file.
   outline_width <- round(lwd_const * QGS_MM_PER_LWD, 7)
 
-  style <- if (length(color_aes) == 0L) {
-    qgs_tmap_single_style(
+  subset <- NULL
+  na <- NULL
+  if (length(color_aes) == 0L) {
+    style <- qgs_tmap_single_style(
       kind, fill_const, col_const, outline_width, i
     )
   } else {
-    qgs_tmap_mapped_style(
-      d, tms$dt$tmapID__, lyr, tml, i, kind, color_aes,
+    attribute <- qgs_tmap_attribute(tml, color_aes, d, i)
+    style <- qgs_tmap_mapped_style(
+      d, tms$dt$tmapID__, lyr, tml, attribute, i, kind, color_aes,
       legends[[color_aes]], gradient_style,
       fill_const, col_const, outline_width
     )
+
+    # Missing values: QGIS's graduated renderers have no missing-value
+    # class, so the NA features go to a separate layer, drawn in the
+    # color tmap mapped them to (categorized styles render NA exactly
+    # via their catch-all category — no extra layer).
+    if (create_na_layer &&
+        style$type %in% c("binned", "graduated", "continuous")) {
+      na_color <- qgs_tmap_na_color(
+        d, tms$dt$tmapID__, lyr, color_aes, attribute
+      )
+      if (!is.null(na_color)) {
+        na <- list(
+          style = qgs_tmap_single_style(
+            kind,
+            if (color_aes == "fill") na_color else fill_const,
+            if (color_aes == "col") na_color else col_const,
+            outline_width,
+            i
+          ),
+          subset = paste0(quote_field(attribute), " IS NULL")
+        )
+        if (style$type == "continuous") {
+          # The data-defined color expression would paint a NULL
+          # attribute in the static fallback color; exclude the missing
+          # features from the main layer instead.
+          subset <- paste0(quote_field(attribute), " IS NOT NULL")
+        }
+      }
+    }
   }
 
   list(
     data = d,
     name = tms$shp_name,
     geometry = geometry,
-    style = style
+    style = style,
+    subset = subset,
+    na = na
   )
+}
+
+# The color tmap mapped the layer's NA features to, as a color string —
+# or NULL when there are no NA features, or tmap does not draw them
+# (missing or fully transparent value.na).
+qgs_tmap_na_color <- function(d, ids, lyr, aes, attribute) {
+  na_ids <- ids[is.na(d[[attribute]])]
+  if (length(na_ids) == 0L) {
+    return(NULL)
+  }
+  md <- lyr$mapping_dt
+  color <- md[[aes]][match(na_ids[[1L]], md$tmapID__)]
+  if (is.na(color) ||
+      grDevices::col2rgb(color, alpha = TRUE)[4L, 1L] == 0L) {
+    return(NULL)
+  }
+  color
+}
+
+# Resolves the data column a mapped aesthetic refers to, rejecting scale
+# constructors whose trained result cannot drive a QGIS renderer.
+qgs_tmap_attribute <- function(tml, aes, d, i) {
+  aes_spec <- tml$mapping.aes[[aes]]
+  if (!aes_spec$scale$FUN %in% QGS_TMAP_SCALE_FUNS) {
+    stop(
+      "layer ", i, ": unsupported scale (", class(aes_spec$scale)[[1L]],
+      ") for `", aes, "`",
+      call. = FALSE
+    )
+  }
+  attribute <- unname(aes_spec$vars[[1L]])
+  if (!attribute %in% names(d)) {
+    stop(
+      "layer ", i, ": column `", attribute, "` not found in the shape data",
+      call. = FALSE
+    )
+  }
+  attribute
 }
 
 # The trained legend of each aesthetic of a layer. step 2 stores the
@@ -416,32 +516,16 @@ qgs_tmap_single_style <- function(kind, fill_const, col_const,
 
 # A layer with a mapped fill/col: resolve the trained scale into a style
 # and wire the varying color to the right slot (fill vs stroke). `ids` is
-# the tmapID of each row of `d`, the key into the layer's mapping_dt.
-qgs_tmap_mapped_style <- function(d, ids, lyr, tml, i, kind, aes, leg,
-                                  gradient_style, fill_const, col_const,
+# the tmapID of each row of `d`, the key into the layer's mapping_dt;
+# `attribute` is the column resolved by qgs_tmap_attribute().
+qgs_tmap_mapped_style <- function(d, ids, lyr, tml, attribute, i, kind, aes,
+                                  leg, gradient_style, fill_const, col_const,
                                   outline_width) {
-  aes_spec <- tml$mapping.aes[[aes]]
-  scale_fun <- aes_spec$scale$FUN
-  if (!scale_fun %in% QGS_TMAP_SCALE_FUNS) {
-    stop(
-      "layer ", i, ": unsupported scale (", class(aes_spec$scale)[[1L]],
-      ") for `", aes, "`",
-      call. = FALSE
-    )
-  }
-  attribute <- unname(aes_spec$vars[[1L]])
-  if (!attribute %in% names(d)) {
-    stop(
-      "layer ", i, ": column `", attribute, "` not found in the shape data",
-      call. = FALSE
-    )
-  }
-
   style <- switch(leg$scale,
     intervals = qgs_tmap_binned_style(leg, attribute, i, gradient_style),
     categorical = qgs_tmap_categorized_style(d, ids, lyr, attribute, aes, i),
     continuous = qgs_tmap_continuous_style(
-      leg, aes_spec$scale, attribute, aes, i, gradient_style
+      leg, tml$mapping.aes[[aes]]$scale, attribute, aes, i, gradient_style
     ),
     stop(
       "layer ", i, ": unsupported scale type \"", leg$scale, "\" for `",

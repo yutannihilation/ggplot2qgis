@@ -65,11 +65,16 @@ test_that("a reversed legend keeps the bin-color pairing", {
   write_qgs_quiet(x, path)
 
   out <- read_qgs(path)
-  # The first symbol covers the lowest bin (10 - 20), whose tmap color is
-  # #DFEDFF regardless of the legend direction.
-  first_symbol <- regmatches(
+  # The first symbol of the graduated renderer covers the lowest bin
+  # (10 - 20), whose tmap color is #DFEDFF regardless of the legend
+  # direction.
+  renderer <- regmatches(
     out,
-    regexpr('<symbol[^>]*name="0"[^>]*>.*?</symbol>', out)
+    regexpr('<renderer-v2[^>]*type="graduatedSymbol".*?</renderer-v2>', out)
+  )
+  first_symbol <- regmatches(
+    renderer,
+    regexpr('<symbol[^>]*name="0"[^>]*>.*?</symbol>', renderer)
   )
   expect_match(first_symbol, "223,237,255", fixed = TRUE)
 })
@@ -136,6 +141,130 @@ test_that("explicit interval breaks are kept exactly", {
   )
   expect_match(out, 'lower="0.0', fixed = TRUE)
   expect_match(out, 'upper="70.0', fixed = TRUE)
+})
+
+test_that("missing values become a separate layer by default", {
+  skip_if_no_tmap()
+  World <- tmap_data("World")
+
+  # World$HPI has NAs; tmap paints them in value.na grey (#BFBFBF).
+  x <- tmap::tm_shape(World) + tmap::tm_polygons(fill = "HPI")
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs_quiet(x, path)
+
+  out <- read_qgs(path)
+  expect_match(out, 'name="World (missing value)"', fixed = TRUE)
+  # The NA layer points at the same GeoPackage, filtered to the NULLs;
+  # no second .gpkg is written.
+  expect_match(
+    out,
+    '|layername=World|subset="HPI" IS NULL<',
+    fixed = TRUE
+  )
+  expect_false(
+    file.exists(file.path(dir, "proj_data", "World (missing value).gpkg"))
+  )
+  # tmap's value.na grey.
+  expect_match(out, 'value="191,191,191,255,rgb:', fixed = TRUE)
+  # The NA layer draws below the main layer: the tree lists the top-most
+  # layer first.
+  tree <- regmatches(
+    out,
+    regexpr("<layer-tree-group>.*</layer-tree-group>", out)
+  )
+  expect_lt(
+    regexpr('name="World"', tree, fixed = TRUE),
+    regexpr('name="World (missing value)"', tree, fixed = TRUE)
+  )
+})
+
+test_that("create_na_layer = FALSE ignores the missing values", {
+  skip_if_no_tmap()
+  World <- tmap_data("World")
+
+  x <- tmap::tm_shape(World) + tmap::tm_polygons(fill = "HPI")
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs_quiet(x, path, create_na_layer = FALSE)
+
+  out <- read_qgs(path)
+  expect_no_match(out, "(missing value)", fixed = TRUE)
+  expect_no_match(out, "subset=", fixed = TRUE)
+})
+
+test_that("no NA layer when the data has no missing values", {
+  skip_if_no_tmap()
+  World <- tmap_data("World")
+  World$complete <- seq_len(nrow(World))
+
+  x <- tmap::tm_shape(World) + tmap::tm_polygons(fill = "complete")
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs_quiet(x, path)
+
+  expect_no_match(read_qgs(path), "(missing value)", fixed = TRUE)
+})
+
+test_that("the exact continuous gradient filters missings out of the main layer", {
+  skip_if_no_tmap()
+  World <- tmap_data("World")
+
+  x <- tmap::tm_shape(World) +
+    tmap::tm_polygons(
+      fill = "HPI",
+      fill.scale = tmap::tm_scale_continuous(values = "viridis")
+    )
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs_quiet(x, path, gradient_style = "continuous")
+
+  out <- read_qgs(path)
+  # The data-defined color expression would paint NULL attributes in the
+  # static fallback color, so the main layer excludes them.
+  expect_match(out, '|subset="HPI" IS NOT NULL<', fixed = TRUE)
+  expect_match(out, 'name="World (missing value)"', fixed = TRUE)
+})
+
+test_that("a col-mapped NA drives the outline of the NA layer", {
+  skip_if_no_tmap()
+  World <- tmap_data("World")
+
+  x <- tmap::tm_shape(World) +
+    tmap::tm_polygons(fill = "gray", col = "HPI")
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs_quiet(x, path)
+
+  out <- read_qgs(path)
+  expect_match(out, 'name="World (missing value)"', fixed = TRUE)
+  # value.na (#BFBFBF) on the border of the NA symbol.
+  expect_match(
+    out,
+    'name="outline_color" type="QString" value="191,191,191,255,rgb:',
+    fixed = TRUE
+  )
+})
+
+test_that("categorical scales keep the in-layer catch-all, no NA layer", {
+  skip_if_no_tmap()
+  World <- tmap_data("World")
+  World$economy[c(1L, 2L)] <- NA
+
+  x <- tmap::tm_shape(World) + tmap::tm_polygons(fill = "economy")
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs_quiet(x, path)
+
+  out <- read_qgs(path)
+  expect_match(out, 'value="NULL"', fixed = TRUE)
+  expect_no_match(out, "(missing value)", fixed = TRUE)
 })
 
 test_that("a tmap categorical scale becomes a categorized style", {

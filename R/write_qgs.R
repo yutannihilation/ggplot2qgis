@@ -123,9 +123,16 @@ QGS_BASEMAPS <- list(
 #' visual constants (symbol size, line type, alpha) keep the QGIS defaults.
 #' Layers sharing one [tmap::tm_shape()] share one GeoPackage: the data is
 #' written once and every layer of the shape references the same table.
-#' Features whose value is missing are not drawn by an intervals/continuous
-#' renderer (QGIS has no missing-value class; tmap paints them in
-#' `value.na`). [tmap::tm_basemap()] layers become XYZ tile layers
+#'
+#' QGIS's graduated renderers have no missing-value class, so for an
+#' intervals/continuous scale the features whose value is missing go to a
+#' separate layer named `"<layer> (missing value)"`, drawn in tmap's
+#' `value.na` color directly below its parent layer (the same GeoPackage
+#' table, filtered with the QGIS provider filter `"column" IS NULL`). Set
+#' `create_na_layer = FALSE` to leave the missing features undrawn
+#' instead. Categorical scales render missing values within their own
+#' layer (the "all other values" category), so they never get the extra
+#' layer. [tmap::tm_basemap()] layers become XYZ tile layers
 #' (overriding the `basemap` argument): a URL template is used as is, a
 #' provider name is resolved via [maptiles::get_providers()], and with
 #' several basemaps only the first one is checked (visible) in the layer
@@ -184,6 +191,10 @@ QGS_BASEMAPS <- list(
 #'
 #'   XYZ tiles are in EPSG:3857; QGIS reprojects them to the project CRS on
 #'   the fly.
+#' @param create_na_layer tmap only. If `TRUE` (the default), features whose
+#'   mapped value is missing become a separate `"<layer> (missing value)"`
+#'   layer in tmap's `value.na` color (see *tmap plots*). If `FALSE`, they
+#'   are not drawn.
 #' @param overwrite If `FALSE` (the default), writing to a `path` that already
 #'   exists is an error. Set to `TRUE` to overwrite it.
 #' @param layer_names Names for the layers, used for the GeoPackage files

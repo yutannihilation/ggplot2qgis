@@ -14,6 +14,7 @@
   overwrite = FALSE,
   layer_names = NULL,
   basemap = NULL,
+  create_na_layer = TRUE,
   ...
 )
 
@@ -100,6 +101,11 @@ keys are:
 
 XYZ tiles are in EPSG:3857; QGIS reprojects them to the project CRS on
 the fly.}
+
+\item{create_na_layer}{tmap only. If \code{TRUE} (the default), features whose
+mapped value is missing become a separate \code{"<layer> (missing value)"}
+layer in tmap's \code{value.na} color (see \emph{tmap plots}). If \code{FALSE}, they
+are not drawn.}
 
 \item{...}{Passed on to the methods.}
 }
@@ -188,9 +194,16 @@ A layer maps either \code{fill} or \code{col} to a data column (not both); other
 visual constants (symbol size, line type, alpha) keep the QGIS defaults.
 Layers sharing one \code{\link[tmap:tm_shape]{tmap::tm_shape()}} share one GeoPackage: the data is
 written once and every layer of the shape references the same table.
-Features whose value is missing are not drawn by an intervals/continuous
-renderer (QGIS has no missing-value class; tmap paints them in
-\code{value.na}). \code{\link[tmap:tm_basemap]{tmap::tm_basemap()}} layers become XYZ tile layers
+
+QGIS's graduated renderers have no missing-value class, so for an
+intervals/continuous scale the features whose value is missing go to a
+separate layer named \code{"<layer> (missing value)"}, drawn in tmap's
+\code{value.na} color directly below its parent layer (the same GeoPackage
+table, filtered with the QGIS provider filter \verb{"column" IS NULL}). Set
+\code{create_na_layer = FALSE} to leave the missing features undrawn
+instead. Categorical scales render missing values within their own
+layer (the "all other values" category), so they never get the extra
+layer. \code{\link[tmap:tm_basemap]{tmap::tm_basemap()}} layers become XYZ tile layers
 (overriding the \code{basemap} argument): a URL template is used as is, a
 provider name is resolved via \code{\link[maptiles:get_providers]{maptiles::get_providers()}}, and with
 several basemaps only the first one is checked (visible) in the layer

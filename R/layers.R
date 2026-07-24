@@ -23,8 +23,10 @@
 #   FALSE writes the layer hidden (e.g. an alternative basemap).
 # * table — the table name inside the .gpkg when it differs from the
 #   display name (several QGIS layers sharing one GeoPackage).
+# * subset — an OGR SQL where clause restricting the layer's features
+#   (QGIS's provider feature filter), or NULL for all features.
 vector_layer <- function(path, name, srs, geometry, style, checked = TRUE,
-                         table = name) {
+                         table = name, subset = NULL) {
   geometry <- match.arg(geometry, c("Point", "LineString", "Polygon"))
   list(
     kind = "vector",
@@ -35,7 +37,8 @@ vector_layer <- function(path, name, srs, geometry, style, checked = TRUE,
     geometry = geometry,
     style = style,
     checked = isTRUE(checked),
-    table = table
+    table = table,
+    subset = subset
   )
 }
 
@@ -86,8 +89,12 @@ layer_datasource <- function(layer) {
       "format&type=xyz&url=", percent_encode(layer$url),
       "&zmax=", layer$zmax, "&zmin=", layer$zmin, "&http-header:referer="
     ),
-    # The ogr-provider datasource: <path>|layername=<table>.
-    vector = paste0(layer$path, "|layername=", layer$table),
+    # The ogr-provider datasource:
+    # <path>|layername=<table>[|subset=<where clause>].
+    vector = paste0(
+      layer$path, "|layername=", layer$table,
+      if (!is.null(layer$subset)) paste0("|subset=", layer$subset)
+    ),
     stop("unknown layer kind: ", layer$kind)
   )
 }
