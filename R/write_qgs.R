@@ -88,6 +88,26 @@ QGS_BASEMAPS <- list(
 #' cannot be represented by these renderers: the symbols are drawn with
 #' solid lines, with a warning.
 #'
+#' # Text and labels
+#'
+#' A [ggplot2::geom_sf_text()] or [ggplot2::geom_sf_label()] layer becomes
+#' a separate labels-only QGIS layer: its features are not drawn (a
+#' null-symbol renderer) and the `label` aesthetic — a bare column name,
+#' like `fill`/`colour` — becomes the labeled field, rendered by QGIS's
+#' own labeling engine. [ggplot2::geom_text()] and [ggplot2::geom_label()]
+#' work the same way for plain data frames, under the *Data frame layers*
+#' rules (the plot must use [ggplot2::coord_sf()], `x`/`y` must be bare
+#' untransformed columns, identity stat and position — so nudging is not
+#' supported).
+#'
+#' The carried-over styles are the text size, the font family, the text
+#' color and, for the label geoms, the background fill color
+#' (`geom_label()`'s `fill`; drawn as a plain rectangle, `fill = NA`
+#' disables it). Everything else (fontface, rounded corners, hjust/vjust,
+#' alpha, ...) keeps the QGIS labeling defaults, and the label placement
+#' is QGIS's: point labels are drawn over the point, line labels along
+#' the line, polygon labels around the centroid.
+#'
 #' # Data frame layers
 #'
 #' A `geom_point()`, `geom_path()`, `geom_line()` or `geom_polygon()` layer
@@ -322,7 +342,18 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
 
     d <- layer_data[[i]]
     sf_data <- inherits(d, "sf")
-    if (!sf_data) {
+    is_text <- qgs_is_text_layer(layer)
+    label <- NULL
+    if (is_text) {
+      # geom_sf_text()/geom_sf_label()/geom_text()/geom_label(): a
+      # labels-only layer — QGIS labeling on a layer whose features are
+      # not drawn (see labeling.R).
+      label <- qgs_label_spec(plot, built, layer, i, d)
+      qgs_check_text_position(layer, i)
+      if (!inherits(layer$stat, "StatSfCoordinates")) {
+        d <- qgs_text_df_sf(plot, built, layer, i, d)
+      }
+    } else if (!sf_data) {
       d <- qgs_df_layer_sf(plot, built, layer, i, d)
     }
 
@@ -349,9 +380,14 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
       layer_name,
       crs,
       geometry,
-      qgs_vector_style(
-        plot, built, layer, i, d, gradient_style, geometry, sf_data
-      )
+      if (is_text) {
+        style_none()
+      } else {
+        qgs_vector_style(
+          plot, built, layer, i, d, gradient_style, geometry, sf_data
+        )
+      },
+      label = label
     )
   }
 
