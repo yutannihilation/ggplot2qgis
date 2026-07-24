@@ -72,6 +72,22 @@ QGS_BASEMAPS <- list(
 #' a constant or a computed expression (e.g. `aes(fill = AREA * 2)`) is an
 #' error.
 #'
+#' # Line types
+#'
+#' A constant `linetype` (tmap: `lty`) is carried over to the symbol's
+#' stroke — the body of a line, the border of a polygon, the ring around
+#' a point marker. `"solid"`, `"dashed"`, `"dotted"` and `"dotdash"`
+#' (1-4 in numeric form) map to the matching QGIS pen styles.
+#' `"longdash"`, `"twodash"` and the hex on/off patterns (e.g. `"1343"`)
+#' have no QGIS preset: on a line layer they become the equivalent custom
+#' dash pattern (scaled by the line width, like in R), while polygon
+#' borders and marker rings, which only support the preset pen styles,
+#' get the nearest preset instead. `"blank"` (0) turns a polygon border
+#' or marker ring off; a blank line layer would draw nothing and is an
+#' error. A linetype that varies by feature (a mapped `linetype`/`lty`)
+#' cannot be represented by these renderers: the symbols are drawn with
+#' solid lines, with a warning.
+#'
 #' # Data frame layers
 #'
 #' A `geom_point()`, `geom_path()`, `geom_line()` or `geom_polygon()` layer
@@ -91,8 +107,8 @@ QGS_BASEMAPS <- list(
 #' group, one feature per group (a mapped `fill`/`colour` column must be
 #' constant within each group). `fill = NA`/`colour = NA` (including
 #' `geom_polygon()`'s default `colour`) render as "not drawn" in QGIS.
-#' The `size`, `shape`, `linetype` and `alpha` aesthetics are not carried
-#' over; those symbol properties keep the QGIS defaults.
+#' The `size`, `shape` and `alpha` aesthetics are not carried over; those
+#' symbol properties keep the QGIS defaults.
 #'
 #' The project opens zoomed to the plot's displayed range (the panel range,
 #' including the default expansion and any [ggplot2::coord_sf()] `xlim`/
@@ -119,8 +135,9 @@ QGS_BASEMAPS <- list(
 #'   renderer with 25 equal-interval classes, or an exact continuous
 #'   gradient with `gradient_style = "continuous"`.
 #'
-#' A layer maps either `fill` or `col` to a data column (not both); other
-#' visual constants (symbol size, line type, alpha) keep the QGIS defaults.
+#' A layer maps either `fill` or `col` to a data column (not both); a
+#' constant `lty` is carried over (see *Line types*), while the other
+#' visual constants (symbol size, alpha) keep the QGIS defaults.
 #' Layers sharing one [tmap::tm_shape()] share one GeoPackage: the data is
 #' written once and every layer of the shape references the same table.
 #'
@@ -694,14 +711,25 @@ qgs_vector_style <- function(plot, built, layer, i, d, gradient_style,
                              geometry, sf_data) {
   mapped <- qgs_style_attribute(plot, layer, i, d)
 
-  const <- qgs_layer_constants(built@data[[i]], sf_defaults = sf_data)
+  const <- qgs_layer_constants(built@data[[i]], sf_defaults = sf_data, i)
   # Rounded so binary float noise (0.15056250000000002) stays out of the
   # project file.
   outline_width <- round(const$linewidth * QGS_MM_PER_LINEWIDTH, 7)
   is_polygon <- geometry == "Polygon"
 
+  linetype <- qgs_linetype(const$linetype, i)
+  if (geometry == "LineString" && identical(linetype, "no")) {
+    stop(
+      "layer ", i, ": the layer would not be drawn (`linetype` is blank)",
+      call. = FALSE
+    )
+  }
+
   if (is.null(mapped)) {
-    return(qgs_single_style(const, is_polygon, outline_width, i))
+    return(style_set_linetype(
+      qgs_single_style(const, is_polygon, outline_width, i),
+      linetype
+    ))
   }
   aes_name <- mapped$aes
   attribute <- mapped$attribute
@@ -745,7 +773,7 @@ qgs_vector_style <- function(plot, built, layer, i, d, gradient_style,
   # Points with a varying colour keep the QGIS marker defaults for the
   # ring around the marker.
 
-  style
+  style_set_linetype(style, linetype)
 }
 
 # The constant aesthetics ggplot2 computed for a layer, taken from its
@@ -756,7 +784,7 @@ qgs_vector_style <- function(plot, built, layer, i, d, gradient_style,
 # NA really means "not drawn" and becomes NULL; only a missing linewidth
 # (geom_point has none) keeps the 0.2 default, matching the marker
 # outline sf points get today.
-qgs_layer_constants <- function(computed, sf_defaults) {
+qgs_layer_constants <- function(computed, sf_defaults, i) {
   first_or <- function(name, default) {
     v <- computed[[name]]
     if (length(v) == 0L || is.na(v[[1L]])) default else v[[1L]]
@@ -765,14 +793,33 @@ qgs_layer_constants <- function(computed, sf_defaults) {
     return(list(
       colour = first_or("colour", "grey35"),
       fill = first_or("fill", "grey90"),
-      linewidth = first_or("linewidth", 0.2)
+      linewidth = first_or("linewidth", 0.2),
+      linetype = qgs_constant_linetype(computed[["linetype"]], i)
     ))
   }
   list(
     colour = first_or("colour", NULL),
     fill = first_or("fill", NULL),
-    linewidth = first_or("linewidth", 0.2)
+    linewidth = first_or("linewidth", 0.2),
+    linetype = qgs_constant_linetype(computed[["linetype"]], i)
   )
+}
+
+# The layer's constant linetype, or solid with a warning when it varies
+# by feature (a mapped `linetype` aesthetic): the renderers only vary the
+# color, and silently drawing the first feature's linetype everywhere
+# would misrepresent the plot. Shared with the tmap path (`lty`).
+qgs_constant_linetype <- function(values, i, what = "linetype") {
+  v <- unique(values)
+  if (length(v) > 1L) {
+    warning(
+      "layer ", i, ": a `", what, "` that varies by feature is not ",
+      "supported; the symbols are drawn with solid lines",
+      call. = FALSE
+    )
+    return("solid")
+  }
+  if (length(v) == 0L || is.na(v[[1L]])) "solid" else v[[1L]]
 }
 
 # For a layer without a fill/colour mapping, reproduce ggplot2's constant
@@ -886,4 +933,60 @@ qgs_rgb <- function(color) {
     return(NULL)
   }
   grDevices::col2rgb(color)[, 1L]
+}
+
+# The names of R's numeric linetypes 0..6 (see ?par, "lty").
+QGS_LINETYPE_NAMES <- c(
+  "blank", "solid", "dashed", "dotted", "dotdash", "longdash", "twodash"
+)
+
+# Normalizes an R linetype — numeric 0..6, a name, or a string of 2-8 hex
+# digits of on/off run lengths — into what the style layer consumes
+# (see style_set_linetype()): the equivalent QGIS pen-style preset where
+# one exists, or the integer run lengths for longdash ("73"), twodash
+# ("2262") and hex patterns, which have none. The run unit is the line
+# width both in R (1/96 inch times lwd) and in Qt's presets, so the
+# numbers carry over as-is. NA is R's "use the default": solid.
+qgs_linetype <- function(linetype, i) {
+  if (length(linetype) == 1L && is.na(linetype)) {
+    return("solid")
+  }
+  if (length(linetype) != 1L ||
+      !(is.character(linetype) || is.numeric(linetype))) {
+    stop(
+      "layer ", i, ": `linetype` must be a single number in 0..6 or a ",
+      "linetype name",
+      call. = FALSE
+    )
+  }
+  if (is.numeric(linetype)) {
+    if (!linetype %in% 0:6) {
+      stop(
+        "layer ", i, ": invalid `linetype`: ", num(linetype),
+        " (must be in 0..6)",
+        call. = FALSE
+      )
+    }
+    linetype <- QGS_LINETYPE_NAMES[[linetype + 1L]]
+  }
+  switch(linetype,
+    blank = "no",
+    solid = "solid",
+    dashed = "dash",
+    dotted = "dot",
+    dotdash = "dash dot",
+    longdash = c(7L, 3L),
+    twodash = c(2L, 2L, 6L, 2L),
+    {
+      # The hex on/off patterns, e.g. "44" or "1343". R requires full
+      # on/off pairs of nonzero runs.
+      if (!grepl("^([1-9A-Fa-f]{2}){1,4}$", linetype)) {
+        stop(
+          "layer ", i, ": invalid `linetype`: \"", linetype, "\"",
+          call. = FALSE
+        )
+      }
+      strtoi(strsplit(linetype, "", fixed = TRUE)[[1L]], base = 16L)
+    }
+  )
 }

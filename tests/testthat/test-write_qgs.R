@@ -885,3 +885,102 @@ test_that("an invalid basemap is an error", {
   expect_error(write_qgs(p, path, basemap = NA_character_), "single string")
   expect_error(write_qgs(p, path, basemap = 1), "single string")
 })
+
+test_that("qgs_linetype normalizes names, numbers and hex patterns", {
+  expect_equal(qgs_linetype("solid", 1), "solid")
+  expect_equal(qgs_linetype(1, 1), "solid")
+  expect_equal(qgs_linetype("dashed", 1), "dash")
+  expect_equal(qgs_linetype(3, 1), "dot")
+  expect_equal(qgs_linetype("dotdash", 1), "dash dot")
+  expect_equal(qgs_linetype(0, 1), "no")
+  # No QGIS preset: the R run-length patterns ("73", "2262").
+  expect_equal(qgs_linetype("longdash", 1), c(7L, 3L))
+  expect_equal(qgs_linetype(6, 1), c(2L, 2L, 6L, 2L))
+  expect_equal(qgs_linetype("1343", 1), c(1L, 3L, 4L, 3L))
+  expect_equal(qgs_linetype("F1", 1), c(15L, 1L))
+  # NA is "use the default".
+  expect_equal(qgs_linetype(NA, 1), "solid")
+
+  expect_error(qgs_linetype(7, 1), "invalid `linetype`")
+  expect_error(qgs_linetype(2.5, 1), "invalid `linetype`")
+  expect_error(qgs_linetype("dashy", 1), "invalid `linetype`")
+  expect_error(qgs_linetype("404", 1), "invalid `linetype`") # 0 run, odd length
+  expect_error(qgs_linetype(c(1, 2), 1), "single")
+  expect_error(qgs_linetype(TRUE, 1), "single")
+})
+
+test_that("a constant linetype is carried over", {
+  nc <- read_nc()
+  dir <- local_out_dir()
+
+  # Polygons: the preset pen style on the border.
+  p <- ggplot2::ggplot(nc) + ggplot2::geom_sf(linetype = "dashed")
+  path <- file.path(dir, "polygons.qgs")
+  write_qgs(p, path)
+  expect_match(
+    read_qgs(path),
+    '<Option name="outline_style" type="QString" value="dash"/>',
+    fixed = TRUE
+  )
+
+  # Numeric form, mapped fill: the constant border stays dotted.
+  p2 <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA), linetype = 3)
+  path2 <- file.path(dir, "mapped.qgs")
+  write_qgs(p2, path2)
+  expect_match(
+    read_qgs(path2),
+    '<Option name="outline_style" type="QString" value="dot"/>',
+    fixed = TRUE
+  )
+})
+
+test_that("longdash lines become an exact custom dash", {
+  nc <- read_nc()
+  lines <- sf::st_cast(nc, "MULTILINESTRING", warn = FALSE)
+  p <- ggplot2::ggplot(lines) + ggplot2::geom_sf(linetype = "longdash")
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "lines.qgs")
+  write_qgs(p, path)
+
+  out <- read_qgs(path)
+  # 7 and 3 line widths of 0.3764062 mm (geom_sf's line default, 0.5).
+  expect_match(
+    out,
+    '<Option name="use_custom_dash" type="QString" value="1"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="customdash" type="QString" value="2.6348434;1.1292186"/>',
+    fixed = TRUE
+  )
+})
+
+test_that("a mapped linetype warns and draws solid", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(linetype = AREA > 0.12))
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  expect_warning(write_qgs(p, path), "varies by feature")
+
+  expect_match(
+    read_qgs(path),
+    '<Option name="outline_style" type="QString" value="solid"/>',
+    fixed = TRUE
+  )
+})
+
+test_that("a blank linetype on a line layer is an error", {
+  nc <- read_nc()
+  lines <- sf::st_cast(nc, "MULTILINESTRING", warn = FALSE)
+  p <- ggplot2::ggplot(lines) + ggplot2::geom_sf(linetype = "blank")
+
+  expect_error(
+    write_qgs(p, tempfile(fileext = ".qgs")),
+    "would not be drawn"
+  )
+})

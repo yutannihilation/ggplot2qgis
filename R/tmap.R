@@ -384,8 +384,8 @@ qgs_tmap_layer_spec <- function(built, d, tms, lyr, tml, i, gradient_style,
   # The constant visual values tmap computed for this layer, taken from
   # its first feature (only meaningful for aesthetics that are not
   # mapped). A missing column (e.g. `fill` of a line layer) is NULL.
-  # TODO: `size`, `shape`, `lty`, `fill_alpha` and `col_alpha` constants
-  # are not carried over; those symbol properties keep the QGIS defaults.
+  # TODO: `size`, `shape`, `fill_alpha` and `col_alpha` constants are not
+  # carried over; those symbol properties keep the QGIS defaults.
   md <- lyr$mapping_dt
   const <- function(name) {
     if (name %in% names(md)) md[[name]][[1L]] else NULL
@@ -395,6 +395,16 @@ qgs_tmap_layer_spec <- function(built, d, tms, lyr, tml, i, gradient_style,
   lwd_const <- const("lwd") %||% 1
   # Rounded so binary float noise stays out of the project file.
   outline_width <- round(lwd_const * QGS_MM_PER_LWD, 7)
+  # A mapped `lty` is already rejected above (only `fill`/`col` scales are
+  # supported), but a vector constant (lty = c("dashed", "solid")) varies
+  # by feature too, which qgs_constant_linetype() warns about.
+  linetype <- qgs_linetype(qgs_constant_linetype(md[["lty"]], i, "lty"), i)
+  if (kind == "lines" && identical(linetype, "no")) {
+    stop(
+      "layer ", i, ": the layer would not be drawn (`lty` is blank)",
+      call. = FALSE
+    )
+  }
 
   subset <- NULL
   na <- NULL
@@ -421,12 +431,15 @@ qgs_tmap_layer_spec <- function(built, d, tms, lyr, tml, i, gradient_style,
       )
       if (!is.null(na_color)) {
         na <- list(
-          style = qgs_tmap_single_style(
-            kind,
-            if (color_aes == "fill") na_color else fill_const,
-            if (color_aes == "col") na_color else col_const,
-            outline_width,
-            i
+          style = style_set_linetype(
+            qgs_tmap_single_style(
+              kind,
+              if (color_aes == "fill") na_color else fill_const,
+              if (color_aes == "col") na_color else col_const,
+              outline_width,
+              i
+            ),
+            linetype
           ),
           subset = paste0(quote_field(attribute), " IS NULL")
         )
@@ -444,7 +457,7 @@ qgs_tmap_layer_spec <- function(built, d, tms, lyr, tml, i, gradient_style,
     data = d,
     name = tms$shp_name,
     geometry = geometry,
-    style = style,
+    style = style_set_linetype(style, linetype),
     subset = subset,
     na = na
   )
