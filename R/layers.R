@@ -25,8 +25,11 @@
 #   display name (several QGIS layers sharing one GeoPackage).
 # * subset — an OGR SQL where clause restricting the layer's features
 #   (QGIS's provider feature filter), or NULL for all features.
+# * label — label settings from qgs_label_spec() to write a
+#   <labeling type="simple"> element (see labeling.R), or NULL for no
+#   labels.
 vector_layer <- function(path, name, srs, geometry, style, checked = TRUE,
-                         table = name, subset = NULL) {
+                         table = name, subset = NULL, label = NULL) {
   geometry <- match.arg(geometry, c("Point", "LineString", "Polygon"))
   list(
     kind = "vector",
@@ -38,7 +41,8 @@ vector_layer <- function(path, name, srs, geometry, style, checked = TRUE,
     style = style,
     checked = isTRUE(checked),
     table = table,
-    subset = subset
+    subset = subset,
+    label = label
   )
 }
 
@@ -306,7 +310,7 @@ write_vector_maplayer <- function(w, layer) {
   xw_attr(w, "autoRefreshTime", "0")
   xw_attr(w, "geometry", layer$geometry)
   xw_attr(w, "hasScaleBasedVisibilityFlag", "0")
-  xw_attr(w, "labelsEnabled", "0")
+  xw_attr(w, "labelsEnabled", if (is.null(layer$label)) "0" else "1")
   xw_attr(w, "layerType", "Vector")
   xw_attr(w, "legendPlaceholderImage", "")
   xw_attr(w, "maxScale", "0")
@@ -343,6 +347,9 @@ write_vector_maplayer <- function(w, layer) {
   xw_attr(w, "mode", "Default")
   xw_empty(w, "selectionColor", c(invalid = "1"))
   xw_end(w) # selection
+  if (!is.null(layer$label)) {
+    write_labeling(w, layer$geometry, layer$label)
+  }
   xw_start(w, "customproperties")
   xw_empty(w, "Option")
   xw_end(w) # customproperties

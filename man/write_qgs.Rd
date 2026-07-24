@@ -159,6 +159,26 @@ cannot be represented by these renderers: the symbols are drawn with
 solid lines, with a warning.
 }
 
+\section{Text and labels}{
+A \code{\link[ggplot2:geom_sf_text]{ggplot2::geom_sf_text()}} or \code{\link[ggplot2:geom_sf_label]{ggplot2::geom_sf_label()}} layer becomes
+a separate labels-only QGIS layer: its features are not drawn (a
+null-symbol renderer) and the \code{label} aesthetic — a bare column name,
+like \code{fill}/\code{colour} — becomes the labeled field, rendered by QGIS's
+own labeling engine. \code{\link[ggplot2:geom_text]{ggplot2::geom_text()}} and \code{\link[ggplot2:geom_label]{ggplot2::geom_label()}}
+work the same way for plain data frames, under the \emph{Data frame layers}
+rules (the plot must use \code{\link[ggplot2:coord_sf]{ggplot2::coord_sf()}}, \code{x}/\code{y} must be bare
+untransformed columns, identity stat and position — so nudging is not
+supported).
+
+The carried-over styles are the text size, the font family, the text
+color and, for the label geoms, the background fill color
+(\code{geom_label()}'s \code{fill}; drawn as a plain rectangle, \code{fill = NA}
+disables it). Everything else (fontface, rounded corners, hjust/vjust,
+alpha, ...) keeps the QGIS labeling defaults, and the label placement
+is QGIS's: point labels are drawn over the point, line labels along
+the line, polygon labels around the centroid.
+}
+
 \section{Data frame layers}{
 A \code{geom_point()}, \code{geom_path()}, \code{geom_line()} or \code{geom_polygon()} layer
 drawn from a plain data frame is converted to an sf layer: one point per

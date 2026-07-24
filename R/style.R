@@ -5,6 +5,7 @@
 # path yet — the Rust crate remains the reference if one is added).
 #
 # A style is a plain named list with a `type` field:
+#   - "none":        no fields; draws nothing (null-symbol renderer)
 #   - "single":      color
 #   - "graduated":   attribute, classes, min, max, stops
 #   - "binned":      attribute, boundaries, colors
@@ -61,6 +62,13 @@ validate_color_stops <- function(stops) {
     stop("color stops must be in ascending offset order", call. = FALSE)
   }
   invisible(stops)
+}
+
+# Draws no features at all (a null-symbol renderer): used for the
+# labels-only layers of the text/label geoms, where only the labeling is
+# visible.
+style_none <- function() {
+  list(type = "none")
 }
 
 # Single symbol with the given fill color (NULL = not drawn, polygons
@@ -539,6 +547,7 @@ target_colors <- function(target, varying, fill, outline) {
 # Writes the <renderer-v2> element for a vector layer.
 write_renderer <- function(w, geom, style) {
   switch(style$type,
+    none = write_null_renderer(w),
     single = write_single_renderer(w, geom, style),
     continuous = write_continuous_renderer(w, geom, style),
     graduated = write_graduated_renderer(w, geom, style),
@@ -546,6 +555,16 @@ write_renderer <- function(w, geom, style) {
     categorized = write_categorized_renderer(w, geom, style),
     stop("unknown style type: ", style$type)
   )
+}
+
+write_null_renderer <- function(w) {
+  xw_start(w, "renderer-v2")
+  xw_attr(w, "enableorderby", "0")
+  xw_attr(w, "forceraster", "0")
+  xw_attr(w, "referencescale", "-1")
+  xw_attr(w, "symbollevels", "0")
+  xw_attr(w, "type", "nullSymbol")
+  xw_end(w)
 }
 
 write_single_renderer <- function(w, geom, style) {

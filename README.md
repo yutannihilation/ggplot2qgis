@@ -77,7 +77,8 @@ write_qgs(x, "nc.qgs")
 
 ## TODOs
 
-- [ ] Support labels
+- [x] Support labels (`geom_sf_text()` / `geom_sf_label()` / `geom_text()` /
+  `geom_label()`; ggplot2 only)
 - [ ] Support tidyterra
   - [ ] vector
   - [ ] raster
