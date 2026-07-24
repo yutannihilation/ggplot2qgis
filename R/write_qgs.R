@@ -43,7 +43,7 @@ QGS_BASEMAPS <- list(
   )
 )
 
-#' Write a ggplot2 map plot as a QGIS project
+#' Write a ggplot2 or tmap map as a QGIS project
 #'
 #' Converts a ggplot2 plot whose layers are drawn from sf objects (or, for
 #' [ggplot2::geom_point()], [ggplot2::geom_path()], [ggplot2::geom_line()]
@@ -98,16 +98,61 @@ QGS_BASEMAPS <- list(
 #' including the default expansion and any [ggplot2::coord_sf()] `xlim`/
 #' `ylim`), reprojected to the project CRS, rather than the whole world.
 #'
-#' @param plot A ggplot object. Each layer must be backed by sf data, or be
-#'   one of the supported data.frame geoms (see *Data frame layers*).
+#' # tmap plots
+#'
+#' A tmap (>= 4.4) object with vector layers is converted the same way:
+#' `tm_polygons()`/`tm_fill()`/`tm_borders()`, `tm_lines()`, and
+#' `tm_symbols()`/`tm_dots()`/`tm_bubbles()`/`tm_squares()` (on point data)
+#' are supported, including [tmap::qtm()] maps. The color scales are
+#' reproduced from tmap's own trained scales:
+#'
+#' - [tmap::tm_scale_intervals()] (any classification style) becomes a
+#'   graduated renderer with tmap's exact break boundaries and colors
+#'   (zero-width bins from tied breaks are collapsed; the continuous-style
+#'   legend variants, `label.style`, are not supported),
+#' - [tmap::tm_scale_categorical()] and [tmap::tm_scale_ordinal()] become a
+#'   categorized renderer keyed by the raw data values (missing values
+#'   become the "all other values" category); tmap's formatted legend
+#'   labels are not carried over,
+#' - [tmap::tm_scale_continuous()] (including the transformed variants,
+#'   approximated with piecewise-linear color stops) becomes a graduated
+#'   renderer with 25 equal-interval classes, or an exact continuous
+#'   gradient with `gradient_style = "continuous"`.
+#'
+#' A layer maps either `fill` or `col` to a data column (not both); other
+#' visual constants (symbol size, line type, alpha) keep the QGIS defaults.
+#' Layers sharing one [tmap::tm_shape()] share one GeoPackage: the data is
+#' written once and every layer of the shape references the same table.
+#' Features whose value is missing are not drawn by an intervals/continuous
+#' renderer (QGIS has no missing-value class; tmap paints them in
+#' `value.na`). [tmap::tm_basemap()] layers become XYZ tile layers
+#' (overriding the `basemap` argument): a URL template is used as is, a
+#' provider name is resolved via [maptiles::get_providers()], and with
+#' several basemaps only the first one is checked (visible) in the layer
+#' tree. Rasters, facets, `tm_text()` and the other scale types are errors.
+#'
+#' The project CRS defaults to the tmap display CRS (`use_plot_crs = TRUE`
+#' for tmap objects): [tmap::tm_crs()] or the main shape's CRS — or
+#' EPSG:3857 when the map has basemaps, which is how tmap itself resolves
+#' it — so the project opens looking like the tmap plot, zoomed to the
+#' main shape's bounding box. `use_plot_crs = FALSE` forces EPSG:3857.
+#'
+#' The conversion relies on tmap internals that are not part of its public
+#' API, so a tmap version older than 4.4 is rejected.
+#'
+#' @param plot A ggplot object whose layers are backed by sf data or one of
+#'   the supported data.frame geoms (see *Data frame layers*), or a tmap
+#'   object with vector layers (see *tmap plots*).
 #' @param path Path of the `.qgs` file to write. Tilde paths (e.g. `~/x.qgs`)
 #'   are expanded.
 #' @param use_plot_crs If `TRUE`, the project (map canvas) CRS is the plot's
-#'   CRS, resolved the way [ggplot2::coord_sf()] does: its `crs` argument if
-#'   specified, otherwise the CRS of the first layer that defines one. If
-#'   `FALSE` (the default), the project CRS is EPSG:3857 (Web Mercator).
-#'   Either way the layers keep the CRS of their data; QGIS reprojects them
-#'   on the fly.
+#'   display CRS: for a ggplot, resolved the way [ggplot2::coord_sf()] does
+#'   (its `crs` argument if specified, otherwise the CRS of the first layer
+#'   that defines one); for a tmap object, tmap's own display CRS (see
+#'   *tmap plots*). If `FALSE`, the project CRS is EPSG:3857 (Web
+#'   Mercator). The default is `FALSE` for ggplot plots and `TRUE` for tmap
+#'   objects. Either way the layers keep the CRS of their data; QGIS
+#'   reprojects them on the fly.
 #' @param gradient_style How a continuous `fill`/`colour` scale is rendered:
 #'
 #'   - `"graduated"` (the default): a graduated renderer with 25
@@ -155,6 +200,7 @@ QGS_BASEMAPS <- list(
 #'   - the geom (e.g. `geom_sf`),
 #'
 #'   with a numbered suffix (`nc_2`) on collision.
+#' @param ... Passed on to the methods.
 #' @returns `path`, invisibly.
 #' @examples
 #' library(ggplot2)
@@ -164,14 +210,33 @@ QGS_BASEMAPS <- list(
 #'   geom_sf(aes(fill = AREA))
 #'
 #' write_qgs(p, tempfile(fileext = ".qgs"))
+#'
+#' # tmap objects work the same way
+#' if (requireNamespace("tmap", quietly = TRUE)) {
+#'   x <- tmap::tm_shape(nc) + tmap::tm_polygons(fill = "AREA")
+#'   write_qgs(x, tempfile(fileext = ".qgs"))
+#' }
 #' @importFrom rlang %||%
 #' @export
-write_qgs <- function(plot, path, use_plot_crs = FALSE,
-                      gradient_style = c("graduated", "continuous"),
-                      overwrite = FALSE, layer_names = NULL, basemap = NULL) {
-  if (!inherits(plot, "ggplot")) {
-    stop("`plot` must be a ggplot object, got ", class(plot)[1], call. = FALSE)
-  }
+write_qgs <- function(plot, path, ...) {
+  UseMethod("write_qgs")
+}
+
+#' @export
+write_qgs.default <- function(plot, path, ...) {
+  stop(
+    "`plot` must be a ggplot or tmap object, got ", class(plot)[1],
+    call. = FALSE
+  )
+}
+
+#' @rdname write_qgs
+#' @export
+write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
+                             gradient_style = c("graduated", "continuous"),
+                             overwrite = FALSE, layer_names = NULL,
+                             basemap = NULL, ...) {
+  rlang::check_dots_empty()
   layers <- plot@layers
   if (length(layers) == 0L) {
     stop("`plot` must have at least one layer", call. = FALSE)
@@ -322,8 +387,7 @@ qgs_basemap_layer <- function(basemap) {
 
   # Not a known key: treat it as a URL template. Require the placeholders so
   # a mistyped key fails loudly instead of producing a broken tile source.
-  if (!all(vapply(c("{z}", "{x}", "{y}"), grepl, logical(1L), basemap,
-                  fixed = TRUE))) {
+  if (!qgs_is_xyz_template(basemap)) {
     stop(
       "`basemap` must be one of ",
       paste0('"', names(QGS_BASEMAPS), '"', collapse = ", "),
@@ -332,6 +396,12 @@ qgs_basemap_layer <- function(basemap) {
     )
   }
   xyz_tile_layer("basemap", basemap, 0L, 19L)
+}
+
+# Whether a string is an XYZ tile URL template (shared by the `basemap`
+# argument and tm_basemap() resolution).
+qgs_is_xyz_template <- function(url) {
+  all(vapply(c("{z}", "{x}", "{y}"), grepl, logical(1L), url, fixed = TRUE))
 }
 
 # The name of every layer, bottom-most first. `layer_names` is the
@@ -351,21 +421,7 @@ qgs_layer_names <- function(plot, layer_names) {
   n <- length(layers)
 
   if (!is.null(layer_names)) {
-    if (!is.character(layer_names) || length(layer_names) != n) {
-      stop(
-        "`layer_names` must be a character vector with one name per layer (",
-        n, ")",
-        call. = FALSE
-      )
-    }
-    if (anyNA(layer_names) || !all(nzchar(layer_names))) {
-      stop("`layer_names` must not contain NA or empty names", call. = FALSE)
-    }
-    if (anyDuplicated(layer_names)) {
-      stop("`layer_names` must be unique", call. = FALSE)
-    }
-    qgs_check_layer_name(layer_names, "`layer_names`")
-    return(layer_names)
+    return(qgs_validate_layer_names(layer_names, n))
   }
 
   out <- character(n)
@@ -379,6 +435,26 @@ qgs_layer_names <- function(plot, layer_names) {
     out[[i]] <- qgs_uncollide_name(name, out[seq_len(i - 1L)])
   }
   out
+}
+
+# Validates a user-supplied `layer_names` override (shared by the ggplot
+# and tmap methods): one non-empty, unique, file-name-safe name per layer.
+qgs_validate_layer_names <- function(layer_names, n) {
+  if (!is.character(layer_names) || length(layer_names) != n) {
+    stop(
+      "`layer_names` must be a character vector with one name per layer (",
+      n, ")",
+      call. = FALSE
+    )
+  }
+  if (anyNA(layer_names) || !all(nzchar(layer_names))) {
+    stop("`layer_names` must not contain NA or empty names", call. = FALSE)
+  }
+  if (anyDuplicated(layer_names)) {
+    stop("`layer_names` must be unique", call. = FALSE)
+  }
+  qgs_check_layer_name(layer_names, "`layer_names`")
+  layer_names
 }
 
 qgs_check_layer_name <- function(names, what) {
@@ -484,23 +560,66 @@ qgs_canvas_extent <- function(panel, project_crs) {
   }
 
   src_crs <- sf::st_crs(panel$crs)
-  if (is.na(src_crs) || is.na(project_crs) || src_crs == project_crs) {
-    return(c(x_range[1L], y_range[1L], x_range[2L], y_range[2L]))
+  qgs_reproject_extent(
+    c(x_range[1L], y_range[1L], x_range[2L], y_range[2L]),
+    src_crs,
+    project_crs
+  )
+}
+
+# Reprojects a c(xmin, ymin, xmax, ymax) extent, densifying the rectangle
+# before transforming so a curved reprojected edge is bounded by its
+# whole arc, not just the four corners. The rectangle is clipped to the
+# destination CRS's area of use first, so e.g. a pole-touching extent
+# does not blow up in Web Mercator (whose domain ends at about +-85
+# degrees). Same-CRS (or unknown-CRS) extents pass through unchanged.
+qgs_reproject_extent <- function(extent, src_crs, dst_crs) {
+  if (is.na(src_crs) || is.na(dst_crs) || src_crs == dst_crs) {
+    return(extent)
   }
 
   n <- 100L
-  xs <- seq(x_range[1L], x_range[2L], length.out = n)
-  ys <- seq(y_range[1L], y_range[2L], length.out = n)
+  xs <- seq(extent[1L], extent[3L], length.out = n)
+  ys <- seq(extent[2L], extent[4L], length.out = n)
   ring <- rbind(
-    cbind(xs, y_range[1L]),
-    cbind(x_range[2L], ys),
-    cbind(rev(xs), y_range[2L]),
-    cbind(x_range[1L], rev(ys))
+    cbind(xs, extent[2L]),
+    cbind(extent[3L], ys),
+    cbind(rev(xs), extent[4L]),
+    cbind(extent[1L], rev(ys))
   )
   ring <- rbind(ring, ring[1L, , drop = FALSE])
   poly <- sf::st_sfc(sf::st_polygon(list(ring)), crs = src_crs)
-  bbox <- sf::st_bbox(sf::st_transform(poly, project_crs))
+
+  aou <- qgs_crs_area_of_use(dst_crs)
+  if (!is.null(aou)) {
+    # The area of use is stated in longitude/latitude: clamp the ring
+    # there, then transform on to the destination.
+    lonlat <- sf::st_crs(4326L)
+    coords <- sf::st_coordinates(sf::st_transform(poly, lonlat))[, 1:2]
+    coords[, 1L] <- pmin(pmax(coords[, 1L], aou$lon[1L]), aou$lon[2L])
+    coords[, 2L] <- pmin(pmax(coords[, 2L], aou$lat[1L]), aou$lat[2L])
+    poly <- sf::st_sfc(sf::st_polygon(list(coords)), crs = lonlat)
+  }
+
+  bbox <- sf::st_bbox(sf::st_transform(poly, dst_crs))
   as.numeric(bbox[c("xmin", "ymin", "xmax", "ymax")])
+}
+
+# The area of use of a CRS as list(lon = c(min, max), lat = c(min, max)),
+# parsed from the USAGE BBOX of its WKT (stated as south, west, north,
+# east in degrees); NULL when the WKT carries none.
+qgs_crs_area_of_use <- function(crs) {
+  m <- regmatches(crs$wkt, regexpr("BBOX\\[[^]]+\\]", crs$wkt))
+  if (length(m) == 0L) {
+    return(NULL)
+  }
+  v <- suppressWarnings(
+    as.numeric(strsplit(substr(m, 6L, nchar(m) - 1L), ",", fixed = TRUE)[[1L]])
+  )
+  if (length(v) != 4L || anyNA(v)) {
+    return(NULL)
+  }
+  list(lon = c(v[2L], v[4L]), lat = c(v[1L], v[3L]))
 }
 
 qgs_geometry_type <- function(d, i) {

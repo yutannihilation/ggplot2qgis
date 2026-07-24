@@ -44,24 +44,19 @@ qgs_build <- function(layers, project_srs = NULL, extent = NULL) {
   }
 
   if (!is.null(project_srs)) {
-    w <- xml_writer(1L)
-    xw_start(w, "projectCrs")
-    write_spatialrefsys(w, project_srs)
-    xw_end(w)
-
-    start <- regexpr("\n  <projectCrs>", out, fixed = TRUE)
-    if (start < 0L) {
-      stop("template anchor not found: <projectCrs>")
-    }
-    end_tag <- "</projectCrs>"
-    end <- regexpr(end_tag, out, fixed = TRUE)
-    if (end < start) {
-      stop("template anchor not found: </projectCrs>")
-    }
-    out <- paste0(
-      substr(out, 1L, start - 1L),
-      xw_finish(w),
-      substr(out, end + nchar(end_tag), nchar(out))
+    # The template carries the canvas CRS in two places (<projectCrs> and
+    # <mapcanvas>'s <destinationsrs>, which the canvas <extent> is
+    # interpreted in) plus the canvas <units>; all three must agree.
+    out <- replace_crs_block(out, "projectCrs", 1L, project_srs)
+    out <- replace_crs_block(out, "destinationsrs", 2L, project_srs)
+    out <- splice(
+      out,
+      "<units>meters</units>",
+      paste0(
+        "<units>",
+        if (project_srs$geographic) "degrees" else "meters",
+        "</units>"
+      )
     )
   }
 
@@ -125,6 +120,32 @@ qgs_build <- function(layers, project_srs = NULL, extent = NULL) {
     paste0("\n  <layerorder>", xw_finish(layerorder), "\n  </layerorder>")
   )
   out
+}
+
+# Replaces a template CRS block (`<tag>` at the given indent level, whose
+# content is a <spatialrefsys>) with `srs`. The tag must occur exactly
+# once in the template; a missing anchor fails loudly.
+replace_crs_block <- function(out, tag, indent, srs) {
+  w <- xml_writer(indent)
+  xw_start(w, tag)
+  write_spatialrefsys(w, srs)
+  xw_end(w)
+
+  start_anchor <- paste0("\n", strrep("  ", indent), "<", tag, ">")
+  start <- regexpr(start_anchor, out, fixed = TRUE)
+  if (start < 0L) {
+    stop("template anchor not found: <", tag, ">")
+  }
+  end_tag <- paste0("</", tag, ">")
+  end <- regexpr(end_tag, out, fixed = TRUE)
+  if (end < start) {
+    stop("template anchor not found: ", end_tag)
+  }
+  paste0(
+    substr(out, 1L, start - 1L),
+    xw_finish(w),
+    substr(out, end + nchar(end_tag), nchar(out))
+  )
 }
 
 # Sets the initial map-canvas view. The template ships zoomed to the whole

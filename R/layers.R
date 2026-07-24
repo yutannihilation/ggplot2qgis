@@ -19,7 +19,12 @@
 #   it must be stated): anything resolve_srs() accepts.
 # * geometry — "Point", "LineString" or "Polygon".
 # * style — how features are rendered, see style_*() in style.R.
-vector_layer <- function(path, name, srs, geometry, style) {
+# * checked — whether the layer is visible (checked in the layer tree);
+#   FALSE writes the layer hidden (e.g. an alternative basemap).
+# * table — the table name inside the .gpkg when it differs from the
+#   display name (several QGIS layers sharing one GeoPackage).
+vector_layer <- function(path, name, srs, geometry, style, checked = TRUE,
+                         table = name) {
   geometry <- match.arg(geometry, c("Point", "LineString", "Polygon"))
   list(
     kind = "vector",
@@ -28,13 +33,15 @@ vector_layer <- function(path, name, srs, geometry, style) {
     path = path,
     srs = resolve_srs(srs),
     geometry = geometry,
-    style = style
+    style = style,
+    checked = isTRUE(checked),
+    table = table
   )
 }
 
 # An XYZ tile layer (e.g. OpenStreetMap-like tiles). The `url` should
 # contain {z}/{x}/{y} placeholders. XYZ tiles are always in EPSG:3857.
-xyz_tile_layer <- function(name, url, zmin, zmax) {
+xyz_tile_layer <- function(name, url, zmin, zmax, checked = TRUE) {
   list(
     kind = "xyz",
     id = qgs_layer_id(name),
@@ -42,7 +49,8 @@ xyz_tile_layer <- function(name, url, zmin, zmax) {
     url = url,
     zmin = as.integer(zmin),
     zmax = as.integer(zmax),
-    srs = resolve_srs(3857)
+    srs = resolve_srs(3857),
+    checked = isTRUE(checked)
   )
 }
 
@@ -79,7 +87,7 @@ layer_datasource <- function(layer) {
       "&zmax=", layer$zmax, "&zmin=", layer$zmin, "&http-header:referer="
     ),
     # The ogr-provider datasource: <path>|layername=<table>.
-    vector = paste0(layer$path, "|layername=", layer$name),
+    vector = paste0(layer$path, "|layername=", layer$table),
     stop("unknown layer kind: ", layer$kind)
   )
 }
@@ -87,7 +95,7 @@ layer_datasource <- function(layer) {
 # <layer-tree-group> entry.
 write_layer_tree_layer <- function(w, layer) {
   xw_start(w, "layer-tree-layer")
-  xw_attr(w, "checked", "Qt::Checked")
+  xw_attr(w, "checked", if (layer$checked) "Qt::Checked" else "Qt::Unchecked")
   xw_attr(w, "expanded", "1")
   xw_attr(w, "id", layer$id)
   xw_attr(w, "legend_exp", "")
@@ -105,7 +113,7 @@ write_layer_tree_layer <- function(w, layer) {
 # <legend> entry.
 write_legend_layer <- function(w, layer) {
   xw_start(w, "legendlayer")
-  xw_attr(w, "checked", "Qt::Checked")
+  xw_attr(w, "checked", if (layer$checked) "Qt::Checked" else "Qt::Unchecked")
   xw_attr(w, "drawingOrder", "-1")
   xw_attr(w, "name", layer$name)
   xw_attr(w, "open", "true")
@@ -116,7 +124,11 @@ write_legend_layer <- function(w, layer) {
   xw_empty(
     w,
     "legendlayerfile",
-    c(isInOverview = "0", layerid = layer$id, visible = "1")
+    c(
+      isInOverview = "0",
+      layerid = layer$id,
+      visible = if (layer$checked) "1" else "0"
+    )
   )
   xw_end(w) # filegroup
   xw_end(w) # legendlayer
