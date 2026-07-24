@@ -6,7 +6,8 @@
 <!-- badges: end -->
 
 Export a [ggplot2](https://ggplot2.tidyverse.org/) map plot (e.g. `geom_sf()`)
-as a [QGIS](https://qgis.org/) project (`.qgs`) file.
+or a [tmap](https://r-tmap.github.io/tmap/) map as a
+[QGIS](https://qgis.org/) project (`.qgs`) file.
 
 `write_qgs()` takes a ggplot2 plot whose layers are backed by
 [sf](https://r-spatial.github.io/sf/) objects and writes a QGIS project. The
@@ -56,10 +57,31 @@ write_qgs(p, "nc.qgs", basemap = "osm")
 See `?write_qgs` for the full set of options (`use_plot_crs`,
 `gradient_style`, `basemap`).
 
+### tmap
+
+A [tmap](https://r-tmap.github.io/tmap/) (>= 4.4) object with vector layers
+works the same way, reproducing tmap's own trained color scales
+(`tm_scale_intervals()` with its exact class boundaries,
+`tm_scale_categorical()`, `tm_scale_continuous()`) and converting
+`tm_basemap()` to an XYZ tile layer:
+
+``` r
+library(tmap)
+
+x <- tm_basemap("OpenStreetMap") +
+  tm_shape(nc) +
+  tm_polygons(fill = "AREA")
+
+write_qgs(x, "nc.qgs")
+```
+
 ## TODOs
 
 - [ ] Support labels
 - [ ] Support tidyterra
   - [ ] vector
   - [ ] raster
-- [ ] Support tmap
+- [x] Support tmap (vector only)
+  - [ ] raster
+  - [ ] symbol size / alpha / line type constants
+  - [ ] `tm_symbols()` on polygons (centroids)

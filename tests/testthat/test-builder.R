@@ -69,6 +69,48 @@ test_that("the layer tree lists the top-most layer first", {
   expect_lt(bottom_id, top_id)
 })
 
+test_that("layers are checked by default, unchecked on request", {
+  layers <- list(
+    xyz_tile_layer("visible", "https://a.example/{z}/{x}/{y}.png", 0, 18),
+    xyz_tile_layer(
+      "hidden", "https://b.example/{z}/{x}/{y}.png", 0, 18,
+      checked = FALSE
+    ),
+    vector_layer(
+      "a.gpkg", "vec_hidden", 4326, "Polygon", single_style(),
+      checked = FALSE
+    )
+  )
+  out <- qgs_build(layers)
+  tree <- regmatches(
+    out,
+    regexpr("<layer-tree-group>.*</layer-tree-group>", out)
+  )
+  # One entry per layer, each carrying its own checked state.
+  entries <- regmatches(
+    tree,
+    gregexpr("<layer-tree-layer[^>]*>", tree)
+  )[[1]]
+  expect_length(entries, 3L)
+  expect_match(
+    entries[grepl('name="visible"', entries, fixed = TRUE)],
+    'checked="Qt::Checked"',
+    fixed = TRUE
+  )
+  expect_match(
+    entries[grepl('name="hidden"', entries, fixed = TRUE)],
+    'checked="Qt::Unchecked"',
+    fixed = TRUE
+  )
+  expect_match(
+    entries[grepl('name="vec_hidden"', entries, fixed = TRUE)],
+    'checked="Qt::Unchecked"',
+    fixed = TRUE
+  )
+  # The legend mirrors the visibility.
+  expect_match(out, 'visible="0"', fixed = TRUE)
+})
+
 test_that("the XYZ datasource matches the sample", {
   layer <- xyz_tile_layer(
     "地理院タイル（標準地図）",
@@ -110,6 +152,21 @@ test_that("the project CRS can be set", {
   expect_match(block, "<authid>EPSG:4267</authid>", fixed = TRUE)
   expect_match(block, "<description>NAD27</description>", fixed = TRUE)
   expect_no_match(block, "3857", fixed = TRUE)
+
+  # The map canvas follows: its <destinationsrs> (which the canvas
+  # <extent> is interpreted in) and <units> must agree with the project
+  # CRS, not keep the template's EPSG:3857 / meters.
+  canvas <- regmatches(out, regexpr("<mapcanvas.*?</mapcanvas>", out))
+  expect_match(canvas, "<authid>EPSG:4267</authid>", fixed = TRUE)
+  expect_no_match(canvas, "EPSG:3857", fixed = TRUE)
+  expect_match(canvas, "<units>degrees</units>", fixed = TRUE)
+})
+
+test_that("a projected project CRS keeps meter canvas units", {
+  out <- qgs_build(list(), project_srs = resolve_srs(32654))
+  canvas <- regmatches(out, regexpr("<mapcanvas.*?</mapcanvas>", out))
+  expect_match(canvas, "<authid>EPSG:32654</authid>", fixed = TRUE)
+  expect_match(canvas, "<units>meters</units>", fixed = TRUE)
 })
 
 test_that("srs can be a WKT2 string", {

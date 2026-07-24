@@ -753,8 +753,33 @@ test_that("a plot without layers is an error", {
   )
 })
 
+test_that("qgs_reproject_extent clips to the target CRS's valid area", {
+  # A whole-world extent (latitudes to the poles) must not blow up in Web
+  # Mercator (valid to about +-85.06 degrees).
+  out <- qgs_reproject_extent(
+    c(-180, -90, 180, 90),
+    sf::st_crs(4326),
+    sf::st_crs(3857)
+  )
+  expect_true(all(abs(out) < 2.1e7))
+  expect_lt(out[2], out[4])
+
+  # Same-CRS extents pass through unchanged, even beyond the area of use.
+  expect_equal(
+    qgs_reproject_extent(
+      c(-180, -90, 180, 90),
+      sf::st_crs(4326),
+      sf::st_crs(4326)
+    ),
+    c(-180, -90, 180, 90)
+  )
+})
+
 test_that("a non-ggplot object is an error", {
-  expect_error(write_qgs(1, tempfile(fileext = ".qgs")), "must be a ggplot")
+  expect_error(
+    write_qgs(1, tempfile(fileext = ".qgs")),
+    "must be a ggplot or tmap object"
+  )
 })
 
 test_that("no basemap is added by default", {

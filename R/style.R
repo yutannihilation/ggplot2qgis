@@ -149,8 +149,13 @@ style_continuous <- function(attribute, min, max, stops) {
 # Discrete coloring of `attribute`: each value/color pair becomes one
 # <category> linked to one <symbol>. `values` is a character vector,
 # `colors` a 3 x n integer matrix; `catch_all`, if given, is the color of
-# the trailing "all other values" (value="NULL") category.
-style_categorized <- function(attribute, values, colors, catch_all = NULL) {
+# the trailing "all other values" (value="NULL") category. `value_type`
+# is the QGIS type of the category values ("string" or "double"): it must
+# match the attribute's field type, because QGIS matches features against
+# categories via the string form of the *typed* value (a REAL 1000000
+# stringifies as "1e+06", which a string category "1000000" never equals).
+style_categorized <- function(attribute, values, colors, catch_all = NULL,
+                              value_type = c("string", "double")) {
   if (length(values) == 0L) {
     stop("categorized style needs at least 1 category", call. = FALSE)
   }
@@ -166,6 +171,7 @@ style_categorized <- function(attribute, values, colors, catch_all = NULL) {
     values = as.character(values),
     colors = colors,
     catch_all = catch_all,
+    value_type = match.arg(value_type),
     target = "fill",
     fill_color = QGS_DEFAULT_FILL_COLOR,
     outline_color = QGS_DEFAULT_OUTLINE_COLOR,
@@ -727,7 +733,7 @@ write_categorized_renderer <- function(w, geom, style) {
     xw_attr(w, "label", style$values[i])
     xw_attr(w, "render", "true")
     xw_attr(w, "symbol", i - 1L)
-    xw_attr(w, "type", "string")
+    xw_attr(w, "type", style$value_type)
     xw_attr(w, "uuid", paste0("{", qgs_uuid(), "}"))
     xw_attr(w, "value", style$values[i])
     xw_end(w)
