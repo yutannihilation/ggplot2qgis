@@ -143,6 +143,22 @@ Only a bare column name is supported for the \code{fill}/\code{colour} aesthetic
 a constant or a computed expression (e.g. \code{aes(fill = AREA * 2)}) is an
 error.
 }
+\section{Line types}{
+A constant \code{linetype} (tmap: \code{lty}) is carried over to the symbol's
+stroke — the body of a line, the border of a polygon, the ring around
+a point marker. \code{"solid"}, \code{"dashed"}, \code{"dotted"} and \code{"dotdash"}
+(1-4 in numeric form) map to the matching QGIS pen styles.
+\code{"longdash"}, \code{"twodash"} and the hex on/off patterns (e.g. \code{"1343"})
+have no QGIS preset: on a line layer they become the equivalent custom
+dash pattern (scaled by the line width, like in R), while polygon
+borders and marker rings, which only support the preset pen styles,
+get the nearest preset instead. \code{"blank"} (0) turns a polygon border
+or marker ring off; a blank line layer would draw nothing and is an
+error. A linetype that varies by feature (a mapped \code{linetype}/\code{lty})
+cannot be represented by these renderers: the symbols are drawn with
+solid lines, with a warning.
+}
+
 \section{Data frame layers}{
 A \code{geom_point()}, \code{geom_path()}, \code{geom_line()} or \code{geom_polygon()} layer
 drawn from a plain data frame is converted to an sf layer: one point per
@@ -161,8 +177,8 @@ line/polygon layer keeps the columns that are constant within every
 group, one feature per group (a mapped \code{fill}/\code{colour} column must be
 constant within each group). \code{fill = NA}/\code{colour = NA} (including
 \code{geom_polygon()}'s default \code{colour}) render as "not drawn" in QGIS.
-The \code{size}, \code{shape}, \code{linetype} and \code{alpha} aesthetics are not carried
-over; those symbol properties keep the QGIS defaults.
+The \code{size}, \code{shape} and \code{alpha} aesthetics are not carried over; those
+symbol properties keep the QGIS defaults.
 
 The project opens zoomed to the plot's displayed range (the panel range,
 including the default expansion and any \code{\link[ggplot2:coord_sf]{ggplot2::coord_sf()}} \code{xlim}/
@@ -190,8 +206,9 @@ renderer with 25 equal-interval classes, or an exact continuous
 gradient with \code{gradient_style = "continuous"}.
 }
 
-A layer maps either \code{fill} or \code{col} to a data column (not both); other
-visual constants (symbol size, line type, alpha) keep the QGIS defaults.
+A layer maps either \code{fill} or \code{col} to a data column (not both); a
+constant \code{lty} is carried over (see \emph{Line types}), while the other
+visual constants (symbol size, alpha) keep the QGIS defaults.
 Layers sharing one \code{\link[tmap:tm_shape]{tmap::tm_shape()}} share one GeoPackage: the data is
 written once and every layer of the shape references the same table.
 

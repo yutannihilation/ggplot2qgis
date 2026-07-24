@@ -319,6 +319,123 @@ test_that("a NULL outline color renders the outline as not drawn", {
   }
 })
 
+test_that("preset linetypes map to outline_style / line_style", {
+  style <- style_set_linetype(style_single(c(51L, 51L, 51L)), "dash")
+  for (geom in c("Polygon", "Point")) {
+    out <- render(geom, style)
+    expect_match(
+      out,
+      '<Option name="outline_style" type="QString" value="dash"/>',
+      fixed = TRUE
+    )
+  }
+  out <- render("LineString", style)
+  expect_match(
+    out,
+    '<Option name="line_style" type="QString" value="dash"/>',
+    fixed = TRUE
+  )
+  # The preset needs no custom dash; the placeholder stays inactive.
+  expect_match(
+    out,
+    '<Option name="use_custom_dash" type="QString" value="0"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="customdash" type="QString" value="5;2"/>',
+    fixed = TRUE
+  )
+})
+
+test_that("run-length linetypes become an exact custom dash on lines", {
+  # longdash on a 0.5 mm line: 7 and 3 line widths.
+  style <- style_single(c(0L, 0L, 0L))
+  style <- style_set_outline(style, c(0L, 0L, 0L), 0.5)
+  style <- style_set_linetype(style, c(7L, 3L))
+  out <- render("LineString", style)
+
+  expect_match(
+    out,
+    '<Option name="use_custom_dash" type="QString" value="1"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="customdash" type="QString" value="3.5;1.5"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="line_style" type="QString" value="solid"/>',
+    fixed = TRUE
+  )
+})
+
+test_that("run-length linetypes are approximated off lines", {
+  expect_equal(linetype_preset(c(7L, 3L)), "dash") # longdash
+  expect_equal(linetype_preset(c(2L, 2L, 6L, 2L)), "dash dot") # twodash
+  expect_equal(linetype_preset(c(1L, 3L)), "dot")
+  expect_equal(linetype_preset("dash dot"), "dash dot") # presets pass through
+
+  # SimpleFill has no custom dash, so twodash lands on the nearest preset.
+  style <- style_set_linetype(style_single(c(0L, 0L, 0L)), c(2L, 2L, 6L, 2L))
+  out <- render("Polygon", style)
+  expect_match(
+    out,
+    '<Option name="outline_style" type="QString" value="dash dot"/>',
+    fixed = TRUE
+  )
+})
+
+test_that("a zero line width falls back to the preset on lines", {
+  style <- style_single(c(0L, 0L, 0L))
+  style <- style_set_outline(style, c(0L, 0L, 0L), 0)
+  style <- style_set_linetype(style, c(7L, 3L))
+  out <- render("LineString", style)
+
+  expect_match(
+    out,
+    '<Option name="line_style" type="QString" value="dash"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="use_custom_dash" type="QString" value="0"/>',
+    fixed = TRUE
+  )
+})
+
+test_that("a blank linetype turns the outline off", {
+  style <- style_set_linetype(style_single(c(51L, 51L, 51L)), "no")
+  for (geom in c("Polygon", "Point")) {
+    out <- render(geom, style)
+    expect_match(
+      out,
+      '<Option name="outline_style" type="QString" value="no"/>',
+      fixed = TRUE
+    )
+  }
+})
+
+test_that("the linetype applies to every symbol of a mapped style", {
+  style <- style_graduated("x", 2, 0, 1, bw_stops())
+  style <- style_set_linetype(style, "dash")
+  out <- render("Polygon", style)
+  # 2 class symbols + the source-symbol.
+  expect_length(
+    regmatches(
+      out,
+      gregexpr(
+        '<Option name="outline_style" type="QString" value="dash"/>',
+        out,
+        fixed = TRUE
+      )
+    )[[1]],
+    3L
+  )
+})
+
 test_that("a stroke target moves the ramp to the outline", {
   style <- style_graduated(
     "AREA", 2, 0, 1,

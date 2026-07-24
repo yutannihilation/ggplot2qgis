@@ -947,3 +947,64 @@ test_that("unsupported tmap features are errors", {
     "scale"
   )
 })
+
+test_that("a constant lty is carried over", {
+  skip_if_no_tmap()
+  nc <- read_nc()
+
+  x <- tmap::tm_shape(nc) + tmap::tm_polygons(lty = "dotted")
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs_quiet(x, path)
+
+  expect_match(
+    read_qgs(path),
+    '<Option name="outline_style" type="QString" value="dot"/>',
+    fixed = TRUE
+  )
+})
+
+test_that("a lty on tm_lines becomes the line style", {
+  skip_if_no_tmap()
+  rivers <- tmap_data("World_rivers")
+
+  x <- tmap::tm_shape(rivers) + tmap::tm_lines(lty = 2)
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs_quiet(x, path)
+
+  expect_match(
+    read_qgs(path),
+    '<Option name="line_style" type="QString" value="dash"/>',
+    fixed = TRUE
+  )
+})
+
+test_that("the missing-value layer inherits the lty", {
+  skip_if_no_tmap()
+  nc <- read_nc()
+  nc$AREA[c(1, 2)] <- NA
+
+  x <- tmap::tm_shape(nc) + tmap::tm_polygons(fill = "AREA", lty = "dashed")
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs_quiet(x, path)
+
+  out <- read_qgs(path)
+  # Every symbol is dashed: the classes, the source-symbol and the single
+  # symbol of the "(missing value)" layer.
+  expect_match(out, "(missing value)", fixed = TRUE)
+  expect_no_match(
+    out,
+    '<Option name="outline_style" type="QString" value="solid"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="outline_style" type="QString" value="dash"/>',
+    fixed = TRUE
+  )
+})
