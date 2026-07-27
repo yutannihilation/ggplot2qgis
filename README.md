@@ -10,12 +10,15 @@ or a [tmap](https://r-tmap.github.io/tmap/) map as a
 [QGIS](https://qgis.org/) project (`.qgs`) file.
 
 `write_qgs()` takes a ggplot2 plot whose layers are backed by
-[sf](https://r-spatial.github.io/sf/) objects and writes a QGIS project. The
-data of each layer is saved as a GeoPackage alongside the `.qgs`, and each
-layer is styled after the plot's trained color scale:
+[sf](https://r-spatial.github.io/sf/) objects (vector layers) or rasters
+(see *Rasters* below) and writes a QGIS project. The data of each layer is
+saved as a GeoPackage (a GeoTIFF for raster layers) alongside the `.qgs`,
+and each layer is styled after the plot's trained color scale:
 
 - a continuous `fill`/`colour` scale becomes a graduated renderer (or a
   continuously interpolated color, see `gradient_style`),
+- a binned scale (e.g. `scale_fill_steps()`) becomes a graduated renderer
+  with the scale's exact bins,
 - a discrete scale becomes a categorized renderer,
 - a layer with no `fill`/`colour` mapping becomes a single symbol with the
   color ggplot2 would have used.
@@ -57,6 +60,24 @@ write_qgs(p, "nc.qgs", basemap = "osm")
 See `?write_qgs` for the full set of options (`use_plot_crs`,
 `gradient_style`, `basemap`).
 
+### Rasters
+
+A raster layer becomes a QGIS raster layer: the data is written as a
+GeoTIFF and rendered with a single-band pseudocolor ramp reproducing the
+plot's continuous `fill` scale. Currently, [tidyterra](https://dieghernan.github.io/tidyterra/)'s `geom_spatraster()` is supported:
+
+``` r
+library(tidyterra)
+
+volcano2 <- terra::rast(system.file("extdata/volcano2.tif", package = "tidyterra"))
+
+p <- ggplot() +
+  geom_spatraster(data = volcano2) +
+  scale_fill_whitebox_c()
+
+write_qgs(p, "volcano.qgs")
+```
+
 ### tmap
 
 A [tmap](https://r-tmap.github.io/tmap/) (>= 4.4) object with vector layers
@@ -79,10 +100,13 @@ write_qgs(x, "nc.qgs")
 
 - [x] Support labels (`geom_sf_text()` / `geom_sf_label()` / `geom_text()` /
   `geom_label()`; ggplot2 only)
-- [ ] Support tidyterra
-  - [ ] vector
-  - [ ] raster
+- [ ] Support rasters
+  - [x] tidyterra's `geom_spatraster()` (single-band with a continuous
+    fill scale)
+  - [ ] multi-band and RGB rasters (`geom_spatraster_rgb()`), contours
+    (`geom_spatraster_contour()`)
+  - [ ] tmap's `tm_raster()`
+- [ ] Support tidyterra vector (`geom_spatvector()`)
 - [x] Support tmap (vector only)
-  - [ ] raster
   - [ ] symbol size / alpha / line type constants
   - [ ] `tm_symbols()` on polygons (centroids)

@@ -2,11 +2,10 @@
 #
 # Each layer is referenced from four places in the project file (see
 # docs/qgs-format.md in the generate-qgs crate); this module renders all
-# of them. Ported from src/layers.rs (vector and XYZ tile layers; GDAL
-# raster layers were not ported because write_qgs() has no raster path
-# yet — the Rust crate remains the reference if one is added).
+# of them. Ported from src/layers.rs.
 #
-# A layer is a plain named list with a `kind` field ("vector" or "xyz").
+# A layer is a plain named list with a `kind` field ("vector", "raster"
+# or "xyz").
 
 # A GeoPackage vector layer.
 #
@@ -46,6 +45,28 @@ vector_layer <- function(path, name, srs, geometry, style, checked = TRUE,
   )
 }
 
+# A GDAL raster layer (a local raster file, e.g. a GeoTIFF).
+#
+# * path — path to the raster file, embedded verbatim into the project. A
+#   relative path is resolved by QGIS against the location of the saved
+#   .qgs file.
+# * name — the display name.
+# * srs — SRS of the data (cannot be derived without reading the file, so
+#   it must be stated): anything resolve_srs() accepts.
+# * style — how the raster is rendered, see style_raster_*() in style.R.
+# * checked — whether the layer is visible (checked in the layer tree).
+raster_layer <- function(path, name, srs, style, checked = TRUE) {
+  list(
+    kind = "raster",
+    id = qgs_layer_id(name),
+    name = name,
+    path = path,
+    srs = resolve_srs(srs),
+    style = style,
+    checked = isTRUE(checked)
+  )
+}
+
 # An XYZ tile layer (e.g. OpenStreetMap-like tiles). The `url` should
 # contain {z}/{x}/{y} placeholders. XYZ tiles are always in EPSG:3857.
 xyz_tile_layer <- function(name, url, zmin, zmax, checked = TRUE) {
@@ -81,6 +102,7 @@ layer_provider_key <- function(layer) {
   switch(layer$kind,
     xyz = "wms",
     vector = "ogr",
+    raster = "gdal",
     stop("unknown layer kind: ", layer$kind)
   )
 }
@@ -99,6 +121,8 @@ layer_datasource <- function(layer) {
       layer$path, "|layername=", layer$table,
       if (!is.null(layer$subset)) paste0("|subset=", layer$subset)
     ),
+    # The gdal-provider datasource is the plain file path.
+    raster = layer$path,
     stop("unknown layer kind: ", layer$kind)
   )
 }
@@ -150,6 +174,7 @@ write_maplayer <- function(w, layer) {
   switch(layer$kind,
     xyz = write_xyz_maplayer(w, layer),
     vector = write_vector_maplayer(w, layer),
+    raster = write_raster_maplayer(w, layer),
     stop("unknown layer kind: ", layer$kind)
   )
 }
@@ -294,6 +319,46 @@ write_xyz_maplayer <- function(w, layer) {
   xw_empty(w, "rasterTransparency")
   write_min_max_origin(w, "None")
   xw_end(w) # rasterrenderer
+  write_pipe_tail(w)
+  xw_end(w) # pipe
+  xw_elem(w, "blendMode", "0")
+  xw_empty(w, "legend")
+  xw_end(w) # maplayer
+}
+
+# GDAL raster layer (samples/elevation.qgs). <extent>/<wgs84extent> and
+# the metadata boilerplate (<resourceMetadata>, <temporal>, <elevation>,
+# ...) are omitted: QGIS recomputes them from the data source on load,
+# like it does for vector layers.
+write_raster_maplayer <- function(w, layer) {
+  xw_start(w, "maplayer")
+  xw_attr(w, "autoRefreshMode", "Disabled")
+  xw_attr(w, "autoRefreshTime", "0")
+  xw_attr(w, "hasScaleBasedVisibilityFlag", "0")
+  xw_attr(w, "layerType", "Raster")
+  xw_attr(w, "legendPlaceholderImage", "")
+  xw_attr(w, "maxScale", "0")
+  xw_attr(w, "minScale", "1e+08")
+  xw_attr(w, "refreshOnNotifyEnabled", "0")
+  xw_attr(w, "refreshOnNotifyMessage", "")
+  xw_attr(w, "styleCategories", "AllStyleCategories")
+  xw_attr(w, "type", "raster")
+  xw_elem(w, "id", layer$id)
+  xw_elem(w, "datasource", layer_datasource(layer))
+  xw_elem(w, "layername", layer$name)
+  xw_start(w, "srs")
+  write_spatialrefsys(w, layer$srs)
+  xw_end(w) # srs
+  xw_elem(w, "provider", "gdal")
+  xw_start(w, "noData")
+  for (band in raster_style_bands(layer$style)) {
+    xw_empty(w, "noDataList", c(bandNo = band, useSrcNoData = "1"))
+  }
+  xw_end(w) # noData
+  write_flags(w)
+  xw_start(w, "pipe")
+  write_pipe_provider(w)
+  write_raster_renderer(w, layer$style)
   write_pipe_tail(w)
   xw_end(w) # pipe
   xw_elem(w, "blendMode", "0")
