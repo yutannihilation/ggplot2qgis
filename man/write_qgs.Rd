@@ -32,8 +32,9 @@ write_qgs(plot, path, ...)
 )
 }
 \arguments{
-\item{plot}{A ggplot object whose layers are backed by sf data or one of
-the supported data.frame geoms (see \emph{Data frame layers}), or a tmap
+\item{plot}{A ggplot object whose layers are backed by sf data, one of
+the supported data.frame geoms (see \emph{Data frame layers}) or
+\code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}} (see \emph{SpatRaster layers}), or a tmap
 object with vector layers (see \emph{tmap plots}).}
 
 \item{path}{Path of the \code{.qgs} file to write. Tilde paths (e.g. \verb{~/x.qgs})
@@ -70,9 +71,11 @@ for a layer with a binned scale keeps the bins, with a warning.}
 \item{overwrite}{If \code{FALSE} (the default), writing to a \code{path} that already
 exists is an error. Set to \code{TRUE} to overwrite it.}
 
-\item{layer_names}{Names for the layers, used for the GeoPackage files
-and in the QGIS layer tree: a character vector with one name per
-layer, bottom-most first. \code{/}, \verb{\\}, \code{|}, \code{:}, \code{*}, \verb{?}, \verb{"}, \code{<}, \code{>}
+\item{layer_names}{Names for the layers, used for the GeoPackage (or
+GeoTIFF) files and in the QGIS layer tree: a character vector with
+one name per layer, bottom-most first (layers that are skipped
+because they draw nothing — see \emph{SpatRaster layers} — do not
+count). \code{/}, \verb{\\}, \code{|}, \code{:}, \code{*}, \verb{?}, \verb{"}, \code{<}, \code{>}
 and control characters cannot be used (the name becomes a file name).
 If \code{NULL} (the default), each layer is named after the first of these
 that applies:
@@ -115,10 +118,11 @@ are not drawn.}
 \description{
 Converts a ggplot2 plot whose layers are drawn from sf objects (or, for
 \code{\link[ggplot2:geom_point]{ggplot2::geom_point()}}, \code{\link[ggplot2:geom_path]{ggplot2::geom_path()}}, \code{\link[ggplot2:geom_line]{ggplot2::geom_line()}}
-and \code{\link[ggplot2:geom_polygon]{ggplot2::geom_polygon()}}, from plain data frames) into a QGIS
-project (\code{.qgs}) file. The data of each layer is saved as a GeoPackage
-under \verb{<path minus extension>_data/}, and the layer is styled after the
-plot's trained color scale:
+and \code{\link[ggplot2:geom_polygon]{ggplot2::geom_polygon()}}, from plain data frames, or from a
+SpatRaster via \code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}}) into a QGIS project
+(\code{.qgs}) file. The data of each layer is saved as a GeoPackage (a
+GeoTIFF for raster layers) under \verb{<path minus extension>_data/}, and
+the layer is styled after the plot's trained color scale:
 }
 \details{
 \itemize{
@@ -203,6 +207,34 @@ symbol properties keep the QGIS defaults.
 The project opens zoomed to the plot's displayed range (the panel range,
 including the default expansion and any \code{\link[ggplot2:coord_sf]{ggplot2::coord_sf()}} \code{xlim}/
 \code{ylim}), reprojected to the project CRS, rather than the whole world.
+}
+
+\section{SpatRaster layers}{
+A \code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}} layer becomes a QGIS raster layer:
+the SpatRaster is written as a GeoTIFF (\verb{<layer name>.tif}, named
+after the band by default) next to the GeoPackages, and rendered by a
+single-band pseudocolor renderer reproducing the plot's continuous
+\code{fill} scale as an interpolated color ramp. Unlike for vector layers
+the ramp is exact \emph{and} the legend shows it as a continuous ramp, so
+the \code{gradient_style} option does not apply to raster layers. Cells
+with missing values are transparent (the GeoTIFF's nodata value).
+
+What is written is the data the plot draws: a raster larger than
+\code{geom_spatraster()}'s \code{maxcell} argument (500,000 cells by default)
+has already been downsampled by tidyterra when the layer was created
+and the original is not recoverable from the plot object — so the
+GeoTIFF stays small, but is not the full-resolution source. Only a
+single-band SpatRaster with a continuous (not binned) \code{fill} scale
+and \code{geom_spatraster()}'s default \code{fill} mapping (the band value) is
+supported for now; \code{\link[tidyterra:geom_spatraster_rgb]{tidyterra::geom_spatraster_rgb()}},
+\code{\link[tidyterra:geom_spatraster_contour]{tidyterra::geom_spatraster_contour()}} and tidyterra's color tables
+(\code{scale_fill_coltab()}) are not.
+
+\code{geom_spatraster()} appends an invisible helper layer (a single empty
+point carrying the raster's CRS to \code{coord_sf()}). Such a layer draws
+nothing, so it is not written to the project: in general, an sf layer
+whose geometries are all empty is skipped and does not count for
+\code{layer_names}.
 }
 
 \section{tmap plots}{

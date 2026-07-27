@@ -21,7 +21,9 @@ Imports:
     tools
 Suggests:
     maptiles,
+    terra,
     testthat (>= 3.0.0),
+    tidyterra (>= 1.2.0),
     tmap (>= 4.4),
     withr,
     xml2

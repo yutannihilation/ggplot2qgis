@@ -47,10 +47,11 @@ QGS_BASEMAPS <- list(
 #'
 #' Converts a ggplot2 plot whose layers are drawn from sf objects (or, for
 #' [ggplot2::geom_point()], [ggplot2::geom_path()], [ggplot2::geom_line()]
-#' and [ggplot2::geom_polygon()], from plain data frames) into a QGIS
-#' project (`.qgs`) file. The data of each layer is saved as a GeoPackage
-#' under `<path minus extension>_data/`, and the layer is styled after the
-#' plot's trained color scale:
+#' and [ggplot2::geom_polygon()], from plain data frames, or from a
+#' SpatRaster via [tidyterra::geom_spatraster()]) into a QGIS project
+#' (`.qgs`) file. The data of each layer is saved as a GeoPackage (a
+#' GeoTIFF for raster layers) under `<path minus extension>_data/`, and
+#' the layer is styled after the plot's trained color scale:
 #'
 #' - a continuous `fill`/`colour` scale becomes a graduated renderer with
 #'   fine-grained equal-interval classes (or a continuously interpolated
@@ -134,6 +135,34 @@ QGS_BASEMAPS <- list(
 #' including the default expansion and any [ggplot2::coord_sf()] `xlim`/
 #' `ylim`), reprojected to the project CRS, rather than the whole world.
 #'
+#' # SpatRaster layers
+#'
+#' A [tidyterra::geom_spatraster()] layer becomes a QGIS raster layer:
+#' the SpatRaster is written as a GeoTIFF (`<layer name>.tif`, named
+#' after the band by default) next to the GeoPackages, and rendered by a
+#' single-band pseudocolor renderer reproducing the plot's continuous
+#' `fill` scale as an interpolated color ramp. Unlike for vector layers
+#' the ramp is exact *and* the legend shows it as a continuous ramp, so
+#' the `gradient_style` option does not apply to raster layers. Cells
+#' with missing values are transparent (the GeoTIFF's nodata value).
+#'
+#' What is written is the data the plot draws: a raster larger than
+#' `geom_spatraster()`'s `maxcell` argument (500,000 cells by default)
+#' has already been downsampled by tidyterra when the layer was created
+#' and the original is not recoverable from the plot object — so the
+#' GeoTIFF stays small, but is not the full-resolution source. Only a
+#' single-band SpatRaster with a continuous (not binned) `fill` scale
+#' and `geom_spatraster()`'s default `fill` mapping (the band value) is
+#' supported for now; [tidyterra::geom_spatraster_rgb()],
+#' [tidyterra::geom_spatraster_contour()] and tidyterra's color tables
+#' (`scale_fill_coltab()`) are not.
+#'
+#' `geom_spatraster()` appends an invisible helper layer (a single empty
+#' point carrying the raster's CRS to `coord_sf()`). Such a layer draws
+#' nothing, so it is not written to the project: in general, an sf layer
+#' whose geometries are all empty is skipped and does not count for
+#' `layer_names`.
+#'
 #' # tmap plots
 #'
 #' A tmap (>= 4.4) object with vector layers is converted the same way:
@@ -184,8 +213,9 @@ QGS_BASEMAPS <- list(
 #' The conversion relies on tmap internals that are not part of its public
 #' API, so a tmap version older than 4.4 is rejected.
 #'
-#' @param plot A ggplot object whose layers are backed by sf data or one of
-#'   the supported data.frame geoms (see *Data frame layers*), or a tmap
+#' @param plot A ggplot object whose layers are backed by sf data, one of
+#'   the supported data.frame geoms (see *Data frame layers*) or
+#'   [tidyterra::geom_spatraster()] (see *SpatRaster layers*), or a tmap
 #'   object with vector layers (see *tmap plots*).
 #' @param path Path of the `.qgs` file to write. Tilde paths (e.g. `~/x.qgs`)
 #'   are expanded.
@@ -234,9 +264,11 @@ QGS_BASEMAPS <- list(
 #'   are not drawn.
 #' @param overwrite If `FALSE` (the default), writing to a `path` that already
 #'   exists is an error. Set to `TRUE` to overwrite it.
-#' @param layer_names Names for the layers, used for the GeoPackage files
-#'   and in the QGIS layer tree: a character vector with one name per
-#'   layer, bottom-most first. `/`, `\`, `|`, `:`, `*`, `?`, `"`, `<`, `>`
+#' @param layer_names Names for the layers, used for the GeoPackage (or
+#'   GeoTIFF) files and in the QGIS layer tree: a character vector with
+#'   one name per layer, bottom-most first (layers that are skipped
+#'   because they draw nothing — see *SpatRaster layers* — do not
+#'   count). `/`, `\`, `|`, `:`, `*`, `?`, `"`, `<`, `>`
 #'   and control characters cannot be used (the name becomes a file name).
 #'   If `NULL` (the default), each layer is named after the first of these
 #'   that applies:
@@ -289,7 +321,6 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
   if (length(layers) == 0L) {
     stop("`plot` must have at least one layer", call. = FALSE)
   }
-  layer_names <- qgs_layer_names(plot, layer_names)
   if (!isTRUE(use_plot_crs) && !isFALSE(use_plot_crs)) {
     stop("`use_plot_crs` must be TRUE or FALSE", call. = FALSE)
   }
@@ -315,6 +346,14 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
     qgs_layer_data(plot, layers[[i]], i)
   })
 
+  # Layers that draw nothing (see qgs_skip_layer()) are not written; they
+  # do not count for `layer_names` either.
+  keep <- !vapply(layer_data, qgs_skip_layer, logical(1L))
+  if (!any(keep)) {
+    stop("`plot` has no layers to write", call. = FALSE)
+  }
+  layer_names <- qgs_layer_names(plot, layer_names, layer_data, keep)
+
   # Build the plot first so that the scales are trained by the data.
   built <- ggplot2::ggplot_build(plot)
 
@@ -338,13 +377,24 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
   # ggplot2's first layer is the bottom-most one, which is also the order
   # qgs_build() expects.
   for (i in seq_along(layers)) {
+    if (!keep[[i]]) {
+      next
+    }
     layer <- layers[[i]]
 
     d <- layer_data[[i]]
+    is_raster <- qgs_is_spatraster_layer(layer)
     sf_data <- inherits(d, "sf")
     is_text <- qgs_is_text_layer(layer)
     label <- NULL
-    if (is_text) {
+    spat <- NULL
+    if (is_raster) {
+      # geom_spatraster(): the layer carries the SpatRaster itself, which
+      # is written as a GeoTIFF below instead of a GeoPackage (see
+      # spatraster.R).
+      spat <- qgs_spatraster(layer, i)
+      crs <- sf::st_crs(terra::crs(spat))
+    } else if (is_text) {
       # geom_sf_text()/geom_sf_label()/geom_text()/geom_label(): a
       # labels-only layer — QGIS labeling on a layer whose features are
       # not drawn (see labeling.R).
@@ -357,7 +407,9 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
       d <- qgs_df_layer_sf(plot, built, layer, i, d)
     }
 
-    crs <- sf::st_crs(d)
+    if (!is_raster) {
+      crs <- sf::st_crs(d)
+    }
     if (is.na(crs)) {
       stop("layer ", i, ": the data has no CRS", call. = FALSE)
     }
@@ -366,6 +418,24 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
     }
 
     layer_name <- layer_names[[i]]
+
+    if (is_raster) {
+      tif_file <- paste0(layer_name, ".tif")
+      tif_path <- file.path(data_dir, tif_file)
+      if (file.exists(tif_path)) {
+        unlink(tif_path)
+      }
+      terra::writeRaster(spat, tif_path)
+      qgs_layers[[i]] <- raster_layer(
+        # relative to the project file
+        paste0(data_dir_name, "/", tif_file),
+        layer_name,
+        crs,
+        qgs_spatraster_style(built, i)
+      )
+      next
+    }
+
     gpkg_file <- paste0(layer_name, ".gpkg")
     gpkg_path <- file.path(data_dir, gpkg_file)
     if (file.exists(gpkg_path)) {
@@ -390,6 +460,9 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
       label = label
     )
   }
+
+  # Drop the slots of the skipped layers.
+  qgs_layers <- qgs_layers[keep]
 
   # Open the project zoomed to the plot's displayed range instead of the
   # template's whole-world extent.
@@ -433,6 +506,14 @@ qgs_layer_data <- function(plot, layer, i) {
   d
 }
 
+# A layer that would draw nothing and is skipped instead of written: an
+# sf layer whose geometries are all empty. geom_spatraster() appends such
+# a layer (a single empty point in the raster's CRS) just to carry the
+# CRS to coord_sf().
+qgs_skip_layer <- function(d) {
+  inherits(d, "sf") && all(sf::st_is_empty(sf::st_geometry(d)))
+}
+
 # Resolves the `basemap` argument to an xyz_tile_layer(), or NULL when no
 # basemap was requested. A predefined key (see QGS_BASEMAPS) wins; otherwise
 # the string must be an XYZ URL template with the {z}/{x}/{y} placeholders.
@@ -468,31 +549,39 @@ qgs_is_xyz_template <- function(url) {
   all(vapply(c("{z}", "{x}", "{y}"), grepl, logical(1L), url, fixed = TRUE))
 }
 
-# The name of every layer, bottom-most first. `layer_names` is the
-# user-supplied override (already documented in write_qgs()); NULL means
-# derive a name per layer:
+# The name of every layer, bottom-most first, "" for the layers that are
+# not written (see qgs_skip_layer()). `layer_names` is the user-supplied
+# override (already documented in write_qgs()), one name per kept layer;
+# NULL means derive a name per layer:
 #
 # 1. the ggplot2 layer name (user-set, so a forbidden character is an
 #    error, like in `layer_names`),
-# 2. the variable the data came from,
-# 3. the geom that created the layer,
-# 4. "layer<i>",
+# 2. the band name for a geom_spatraster() layer (its constructor is a
+#    bare layer() call and its data an internal tibble, so the
+#    derivations below would never find anything better),
+# 3. the variable the data came from,
+# 4. the geom that created the layer,
+# 5. "layer<i>",
 #
-# where 2.-4. are derived, so they are silently sanitized instead. A name
+# where 2.-5. are derived, so they are silently sanitized instead. A name
 # colliding with an earlier one gets a "_2", "_3", ... suffix.
-qgs_layer_names <- function(plot, layer_names) {
+qgs_layer_names <- function(plot, layer_names, layer_data, keep) {
   layers <- plot@layers
-  n <- length(layers)
+  out <- character(length(layers))
+  idx <- which(keep)
 
   if (!is.null(layer_names)) {
-    return(qgs_validate_layer_names(layer_names, n))
+    out[idx] <- qgs_validate_layer_names(layer_names, length(idx))
+    return(out)
   }
 
-  out <- character(n)
-  for (i in seq_len(n)) {
+  for (i in idx) {
     name <- layers[[i]]$name
+    band <- layer_data[[i]][["lyr"]]
     if (!is.null(name)) {
       qgs_check_layer_name(name, paste0("layer ", i, ": the layer name"))
+    } else if (qgs_is_spatraster_layer(layers[[i]]) && length(band) > 0L) {
+      name <- qgs_sanitize_layer_name(as.character(band[[1L]]), i)
     } else {
       name <- qgs_derived_layer_name(plot, layers[[i]], i)
     }

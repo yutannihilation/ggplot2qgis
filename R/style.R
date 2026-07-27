@@ -1,10 +1,12 @@
-# Symbology: vector styles and <renderer-v2> generation.
+# Symbology: vector styles and <renderer-v2> generation, plus raster
+# styles and <rasterrenderer> generation.
 #
-# Ported from src/style.rs of the generate-qgs crate (the vector renderers;
-# the raster renderers were not ported because write_qgs() has no raster
-# path yet — the Rust crate remains the reference if one is added).
+# Ported from src/style.rs of the generate-qgs crate (the multiband-color
+# raster renderer and the DISCRETE pseudocolor mode were not ported
+# because write_qgs() has no path to them yet — the Rust crate remains
+# the reference if one is added).
 #
-# A style is a plain named list with a `type` field:
+# A vector style is a plain named list with a `type` field:
 #   - "none":        no fields; draws nothing (null-symbol renderer)
 #   - "single":      color
 #   - "graduated":   attribute, classes, min, max, stops
@@ -20,6 +22,9 @@
 # pen-style preset ("no", "solid", "dash", "dot", "dash dot") or an
 # integer vector of on/off run lengths in line-width units (see
 # style_set_linetype()).
+#
+# A raster style is the same kind of list:
+#   - "raster_pseudocolor": band, min, max, stops
 
 QGS_DEFAULT_OUTLINE_COLOR <- c(35L, 35L, 35L)
 QGS_DEFAULT_OUTLINE_WIDTH <- 0.26
@@ -230,6 +235,39 @@ style_set_stroke_target <- function(style, fill_color) {
   style$target <- "stroke"
   style$fill_color <- fill_color
   style
+}
+
+# Continuous pseudocoloring of one raster band (1-based): the cell value
+# is interpolated along `stops` between `min` and `max` (values outside
+# are clamped). Written as an INTERPOLATED <colorrampshader>, which —
+# unlike the vector renderers — reproduces the gradient exactly *and*
+# shows a continuous ramp in the legend, so there is no graduated vs.
+# continuous trade-off for rasters.
+style_raster_pseudocolor <- function(band, min, max, stops) {
+  if (min >= max) {
+    stop(
+      "invalid range: min (", num(min), ") must be smaller than max (",
+      num(max), ")",
+      call. = FALSE
+    )
+  }
+  validate_color_stops(stops)
+  list(
+    type = "raster_pseudocolor",
+    band = as.integer(band),
+    min = min,
+    max = max,
+    stops = stops
+  )
+}
+
+# The number of bands a raster style references (the raster maplayer
+# writes one <noDataList> entry per band).
+raster_style_band_count <- function(style) {
+  switch(style$type,
+    raster_pseudocolor = style$band,
+    stop("unknown raster style type: ", style$type)
+  )
 }
 
 # Geometry helpers. A geometry type is one of "Point", "LineString",
@@ -881,4 +919,96 @@ write_categorized_renderer <- function(w, geom, style) {
   xw_empty(w, "sizescale")
   write_data_defined_properties(w, "data-defined-properties")
   xw_end(w) # renderer-v2
+}
+
+# Writes the <rasterrenderer> element for a GDAL raster layer.
+write_raster_renderer <- function(w, style) {
+  switch(style$type,
+    raster_pseudocolor = write_pseudocolor_renderer(w, style),
+    stop("unknown raster style type: ", style$type)
+  )
+}
+
+# Single-band pseudocolor (samples/elevation.qgs): the band value is
+# colored through <rastershader>/<colorrampshader colorRampType=
+# "INTERPOLATED">, one <item> per color stop, interpolated linearly in
+# between (values outside min..max are clamped to the end colors).
+write_pseudocolor_renderer <- function(w, style) {
+  xw_start(w, "rasterrenderer")
+  xw_attr(w, "alphaBand", "-1")
+  xw_attr(w, "band", style$band)
+  xw_attr(w, "classificationMax", num(style$max))
+  xw_attr(w, "classificationMin", num(style$min))
+  xw_attr(w, "nodataColor", "")
+  xw_attr(w, "opacity", "1")
+  xw_attr(w, "type", "singlebandpseudocolor")
+  xw_empty(w, "rasterTransparency")
+  write_min_max_origin(w, "None")
+  xw_start(w, "rastershader")
+  xw_start(w, "colorrampshader")
+  xw_attr(w, "classificationMode", "1")
+  xw_attr(w, "clip", "0")
+  xw_attr(w, "colorRampType", "INTERPOLATED")
+  xw_attr(w, "labelPrecision", "0")
+  xw_attr(w, "maximumValue", num(style$max))
+  xw_attr(w, "minimumValue", num(style$min))
+  n <- length(style$stops$offsets)
+  write_gradient_colorramp(
+    w,
+    style$stops$colors[, 1L],
+    style$stops$colors[, n],
+    stops_slice(style$stops, seq_len(n)[-c(1L, n)])
+  )
+  for (i in seq_len(n)) {
+    value <- num(style$min + (style$max - style$min) * style$stops$offsets[i])
+    xw_empty(
+      w,
+      "item",
+      c(
+        alpha = "255",
+        color = color_hex(style$stops$colors[, i]),
+        label = value,
+        value = value
+      )
+    )
+  }
+  write_ramp_legend_settings(w)
+  xw_end(w) # colorrampshader
+  xw_end(w) # rastershader
+  xw_end(w) # rasterrenderer
+}
+
+# Static legend boilerplate of a <colorrampshader> (byte-identical across
+# the QGIS-saved samples).
+write_ramp_legend_settings <- function(w) {
+  xw_start(w, "rampLegendSettings")
+  xw_attr(w, "direction", "0")
+  xw_attr(w, "maximumLabel", "")
+  xw_attr(w, "minimumLabel", "")
+  xw_attr(w, "orientation", "2")
+  xw_attr(w, "prefix", "")
+  xw_attr(w, "suffix", "")
+  xw_attr(w, "useContinuousLegend", "1")
+  xw_start(w, "numericFormat")
+  xw_attr(w, "id", "basic")
+  xw_start(w, "Option")
+  xw_attr(w, "type", "Map")
+  xw_empty(w, "Option", c(name = "decimal_separator", type = "invalid"))
+  xw_empty(w, "Option", c(name = "decimals", type = "int", value = "6"))
+  xw_empty(w, "Option", c(name = "rounding_type", type = "int", value = "0"))
+  xw_empty(w, "Option", c(name = "show_plus", type = "bool", value = "false"))
+  xw_empty(
+    w,
+    "Option",
+    c(name = "show_thousand_separator", type = "bool", value = "true")
+  )
+  xw_empty(
+    w,
+    "Option",
+    c(name = "show_trailing_zeros", type = "bool", value = "false")
+  )
+  xw_empty(w, "Option", c(name = "thousand_separator", type = "invalid"))
+  xw_end(w) # Option
+  xw_end(w) # numericFormat
+  xw_end(w) # rampLegendSettings
 }

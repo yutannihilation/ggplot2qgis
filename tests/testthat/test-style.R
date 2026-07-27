@@ -530,3 +530,71 @@ test_that("invalid styles are errors", {
     "at least 1 category"
   )
 })
+
+test_that("a raster pseudocolor renderer interpolates the stops", {
+  stops <- list(
+    offsets = c(0, 0.5, 1),
+    colors = cbind(c(0L, 0L, 0L), c(100L, 110L, 120L), c(255L, 255L, 255L))
+  )
+  style <- style_raster_pseudocolor(1L, 80, 200, stops)
+  w <- xml_writer(0L)
+  write_raster_renderer(w, style)
+  out <- xw_finish(w)
+
+  expect_match(out, 'type="singlebandpseudocolor"', fixed = TRUE)
+  expect_match(out, 'band="1"', fixed = TRUE)
+  expect_match(out, 'classificationMin="80"', fixed = TRUE)
+  expect_match(out, 'classificationMax="200"', fixed = TRUE)
+  expect_match(
+    out,
+    'classificationMode="1" clip="0" colorRampType="INTERPOLATED"',
+    fixed = TRUE
+  )
+  expect_match(out, 'minimumValue="80"', fixed = TRUE)
+  expect_match(out, 'maximumValue="200"', fixed = TRUE)
+  # The colorramp holds the endpoints plus the intermediate stop.
+  expect_match(
+    out,
+    '<Option name="color1" type="QString" value="0,0,0,255,rgb:0,0,0,1"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="color2" type="QString" value="255,255,255,255,rgb:1,1,1,1"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    'name="stops" type="QString" value="0.5;100,110,120,255,rgb:',
+    fixed = TRUE
+  )
+  # One <item> per stop, at min + offset * (max - min).
+  expect_match(
+    out,
+    '<item alpha="255" color="#000000" label="80" value="80"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<item alpha="255" color="#646e78" label="140" value="140"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<item alpha="255" color="#ffffff" label="200" value="200"/>',
+    fixed = TRUE
+  )
+  expect_match(out, 'useContinuousLegend="1"', fixed = TRUE)
+})
+
+test_that("style_raster_pseudocolor() validates its inputs", {
+  stops <- list(
+    offsets = c(0, 1),
+    colors = cbind(c(0L, 0L, 0L), c(255L, 255L, 255L))
+  )
+  expect_error(style_raster_pseudocolor(1L, 1, 1, stops), "invalid range")
+  expect_error(
+    style_raster_pseudocolor(1L, 0, 1, stops_slice(stops, 1L)),
+    "at least 2 color stops, got 1"
+  )
+})
