@@ -1,10 +1,9 @@
 # Symbology: vector styles and <renderer-v2> generation, plus raster
 # styles and <rasterrenderer> generation.
 #
-# Ported from src/style.rs of the generate-qgs crate (the multiband-color
-# raster renderer and the DISCRETE pseudocolor mode were not ported
-# because write_qgs() has no path to them yet — the Rust crate remains
-# the reference if one is added).
+# Ported from src/style.rs of the generate-qgs crate (the DISCRETE
+# pseudocolor mode was not ported because write_qgs() has no path to it
+# yet — the Rust crate remains the reference if one is added).
 #
 # A vector style is a plain named list with a `type` field:
 #   - "none":        no fields; draws nothing (null-symbol renderer)
@@ -25,6 +24,7 @@
 #
 # A raster style is the same kind of list:
 #   - "raster_pseudocolor": band, min, max, stops
+#   - "raster_multiband":   red, green, blue, algorithm, opacity
 
 QGS_DEFAULT_OUTLINE_COLOR <- c(35L, 35L, 35L)
 QGS_DEFAULT_OUTLINE_WIDTH <- 0.26
@@ -261,11 +261,71 @@ style_raster_pseudocolor <- function(band, min, max, stops) {
   )
 }
 
+# True-color rendering of three raster bands (1-based) mapped to the
+# red, green and blue channels. Each channel is list(band, min, max);
+# `algorithm` says how a channel value becomes a 0..255 intensity:
+#   - "NoEnhancement": used as-is (min/max are recorded but not
+#     applied — QGIS's own default for a Byte RGB raster, so min/max
+#     are the band statistics).
+#   - "StretchToMinimumMaximum": stretched linearly from min..max to
+#     0..255, values outside clamped (min/max are chosen values).
+# `opacity` is the layer opacity in 0..1.
+style_raster_multiband <- function(red, green, blue,
+                                   algorithm = "NoEnhancement",
+                                   opacity = 1) {
+  algorithm <- match.arg(
+    algorithm,
+    c("NoEnhancement", "StretchToMinimumMaximum")
+  )
+  for (channel in list(red, green, blue)) {
+    band <- channel$band
+    if (!is.numeric(band) || length(band) != 1L || is.na(band) ||
+      band < 1 || band %% 1 != 0) {
+      stop(
+        "band numbers are 1-based, got ",
+        if (is.null(band)) "NULL" else paste(band, collapse = ", "),
+        call. = FALSE
+      )
+    }
+    for (field in c("min", "max")) {
+      value <- channel[[field]]
+      if (!is.numeric(value) || length(value) != 1L || !is.finite(value)) {
+        stop(
+          "a channel's `", field, "` must be a single finite number",
+          call. = FALSE
+        )
+      }
+    }
+    if (channel$min > channel$max) {
+      stop(
+        "invalid range: min (", num(channel$min),
+        ") must not be greater than max (", num(channel$max), ")",
+        call. = FALSE
+      )
+    }
+  }
+  if (!is.numeric(opacity) || length(opacity) != 1L || is.na(opacity) ||
+    opacity < 0 || opacity > 1) {
+    stop("`opacity` must be a single number in [0, 1]", call. = FALSE)
+  }
+  list(
+    type = "raster_multiband",
+    red = red,
+    green = green,
+    blue = blue,
+    algorithm = algorithm,
+    opacity = opacity
+  )
+}
+
 # The bands a raster style references (the raster maplayer writes one
 # <noDataList> entry per referenced band).
 raster_style_bands <- function(style) {
   switch(style$type,
     raster_pseudocolor = style$band,
+    raster_multiband = sort(unique(c(
+      style$red$band, style$green$band, style$blue$band
+    ))),
     stop("unknown raster style type: ", style$type)
   )
 }
@@ -925,8 +985,46 @@ write_categorized_renderer <- function(w, geom, style) {
 write_raster_renderer <- function(w, style) {
   switch(style$type,
     raster_pseudocolor = write_pseudocolor_renderer(w, style),
+    raster_multiband = write_multiband_renderer(w, style),
     stop("unknown raster style type: ", style$type)
   )
+}
+
+# Multiband color, a.k.a. true color (samples/true-color.qgs of the
+# generate-qgs crate): three bands drive the red, green and blue
+# channels through one <*ContrastEnhancement> element each; there is no
+# <rastershader>.
+write_multiband_renderer <- function(w, style) {
+  xw_start(w, "rasterrenderer")
+  xw_attr(w, "alphaBand", "-1")
+  xw_attr(w, "blueBand", style$blue$band)
+  xw_attr(w, "greenBand", style$green$band)
+  xw_attr(w, "nodataColor", "")
+  xw_attr(w, "opacity", num(style$opacity))
+  xw_attr(w, "redBand", style$red$band)
+  xw_attr(w, "type", "multibandcolor")
+  xw_empty(w, "rasterTransparency")
+  # <minMaxOrigin> records where the channel min/max come from: the band
+  # statistics for NoEnhancement (what QGIS saves for a Byte RGB
+  # raster), user-chosen values ("None") for an explicit stretch.
+  write_min_max_origin(
+    w,
+    if (style$algorithm == "NoEnhancement") "MinMax" else "None"
+  )
+  channels <- list(
+    redContrastEnhancement = style$red,
+    greenContrastEnhancement = style$green,
+    blueContrastEnhancement = style$blue
+  )
+  for (tag in names(channels)) {
+    channel <- channels[[tag]]
+    xw_start(w, tag)
+    xw_elem(w, "minValue", num(channel$min))
+    xw_elem(w, "maxValue", num(channel$max))
+    xw_elem(w, "algorithm", style$algorithm)
+    xw_end(w) # tag
+  }
+  xw_end(w) # rasterrenderer
 }
 
 # Single-band pseudocolor (samples/elevation.qgs): the band value is

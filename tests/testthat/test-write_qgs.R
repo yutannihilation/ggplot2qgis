@@ -984,3 +984,42 @@ test_that("a blank linetype on a line layer is an error", {
     "would not be drawn"
   )
 })
+
+test_that("mixed single/MULTI geometries are cast to the MULTI type", {
+  poly <- sf::st_polygon(list(cbind(c(0, 1, 1, 0, 0), c(0, 0, 1, 1, 0))))
+  mpoly <- sf::st_multipolygon(
+    list(list(cbind(c(2, 3, 3, 2, 2), c(0, 0, 1, 1, 0))))
+  )
+  # A POLYGON next to a MULTIPOLYGON makes the column's type the generic
+  # GEOMETRY (what a terra::vect()-backed layer produces).
+  d <- sf::st_sf(a = c(1, 2), geometry = sf::st_sfc(poly, mpoly, crs = 4326))
+  p <- ggplot2::ggplot(d) + ggplot2::geom_sf()
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "mixed.qgs")
+  write_qgs(p, path)
+
+  expect_match(read_qgs(path), 'geometry="Polygon"', fixed = TRUE)
+  written <- sf::st_read(
+    file.path(dir, "mixed_data", "d.gpkg"),
+    quiet = TRUE
+  )
+  expect_true(all(sf::st_geometry_type(written) == "MULTIPOLYGON"))
+})
+
+test_that("an empty generic geometry column is not cast", {
+  d <- sf::st_sf(a = integer(), geometry = sf::st_sfc(crs = 4326))
+  expect_identical(qgs_homogenize_geometry(d), d)
+})
+
+test_that("a mix across geometry families is still an error", {
+  point <- sf::st_point(c(0, 0))
+  poly <- sf::st_polygon(list(cbind(c(0, 1, 1, 0, 0), c(0, 0, 1, 1, 0))))
+  d <- sf::st_sf(a = c(1, 2), geometry = sf::st_sfc(point, poly, crs = 4326))
+  p <- ggplot2::ggplot(d) + ggplot2::geom_sf()
+
+  expect_error(
+    write_qgs(p, file.path(local_out_dir(), "mixed.qgs")),
+    "unsupported geometry type GEOMETRY"
+  )
+})

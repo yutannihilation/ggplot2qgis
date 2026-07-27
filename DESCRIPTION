@@ -21,7 +21,7 @@ Imports:
     tools
 Suggests:
     maptiles,
-    terra,
+    terra (>= 1.7-3),
     testthat (>= 3.0.0),
     tidyterra (>= 1.2.0),
     tmap (>= 4.4),

@@ -598,3 +598,109 @@ test_that("style_raster_pseudocolor() validates its inputs", {
     "at least 2 color stops, got 1"
   )
 })
+
+test_that("a multiband renderer writes one enhancement per channel", {
+  # samples/true-color.qgs of the generate-qgs crate.
+  style <- style_raster_multiband(
+    red = list(band = 1L, min = 35, max = 253),
+    green = list(band = 2L, min = 35, max = 251),
+    blue = list(band = 3L, min = 35, max = 250)
+  )
+  w <- xml_writer(0L)
+  write_raster_renderer(w, style)
+  out <- xw_finish(w)
+
+  expect_match(out, 'type="multibandcolor"', fixed = TRUE)
+  expect_match(out, 'redBand="1"', fixed = TRUE)
+  expect_match(out, 'greenBand="2"', fixed = TRUE)
+  expect_match(out, 'blueBand="3"', fixed = TRUE)
+  expect_match(out, 'opacity="1"', fixed = TRUE)
+  expect_match(out, "<limits>MinMax</limits>", fixed = TRUE)
+  for (channel in list(
+    c("redContrastEnhancement", "253"),
+    c("greenContrastEnhancement", "251"),
+    c("blueContrastEnhancement", "250")
+  )) {
+    expect_match(
+      out,
+      paste0(
+        "<", channel[1L], ">\n    <minValue>35</minValue>\n",
+        "    <maxValue>", channel[2L], "</maxValue>\n",
+        "    <algorithm>NoEnhancement</algorithm>"
+      ),
+      fixed = TRUE
+    )
+  }
+  # A multiband renderer has no shader.
+  expect_no_match(out, "<rastershader>", fixed = TRUE)
+
+  expect_equal(raster_style_bands(style), c(1L, 2L, 3L))
+})
+
+test_that("a multiband stretch writes the algorithm and user limits", {
+  style <- style_raster_multiband(
+    red = list(band = 1L, min = 0, max = 500),
+    green = list(band = 2L, min = 0, max = 500),
+    blue = list(band = 3L, min = 0, max = 500),
+    algorithm = "StretchToMinimumMaximum",
+    opacity = 0.5
+  )
+  w <- xml_writer(0L)
+  write_raster_renderer(w, style)
+  out <- xw_finish(w)
+
+  expect_match(out, 'opacity="0.5"', fixed = TRUE)
+  expect_match(out, "<limits>None</limits>", fixed = TRUE)
+  expect_match(
+    out,
+    "<algorithm>StretchToMinimumMaximum</algorithm>",
+    fixed = TRUE
+  )
+  expect_match(out, "<maxValue>500</maxValue>", fixed = TRUE)
+})
+
+test_that("style_raster_multiband() validates its inputs", {
+  channel <- function(band, min = 0, max = 1) {
+    list(band = band, min = min, max = max)
+  }
+  expect_error(
+    style_raster_multiband(channel(0L), channel(2L), channel(3L)),
+    "band numbers are 1-based, got 0"
+  )
+  expect_error(
+    style_raster_multiband(channel(1.5), channel(2L), channel(3L)),
+    "band numbers are 1-based, got 1.5"
+  )
+  expect_error(
+    style_raster_multiband(list(band = 1L), channel(2L), channel(3L)),
+    "a channel's `min` must be a single finite number"
+  )
+  expect_error(
+    style_raster_multiband(
+      channel(1L, 0, NaN), channel(2L), channel(3L)
+    ),
+    "a channel's `max` must be a single finite number"
+  )
+  expect_error(
+    style_raster_multiband(channel(1L, 2, 1), channel(2L), channel(3L)),
+    "invalid range"
+  )
+  # An equal min/max is allowed (a constant band).
+  expect_no_error(
+    style_raster_multiband(channel(1L, 1, 1), channel(2L), channel(3L))
+  )
+  expect_error(
+    style_raster_multiband(
+      channel(1L), channel(2L), channel(3L),
+      opacity = 1.5
+    ),
+    "`opacity` must be a single number"
+  )
+  expect_error(
+    style_raster_multiband(
+      channel(1L), channel(2L), channel(3L),
+      algorithm = "Nope"
+    ),
+    "'arg' should be one of"
+  )
+})
