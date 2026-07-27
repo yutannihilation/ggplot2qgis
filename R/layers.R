@@ -351,7 +351,7 @@ write_raster_maplayer <- function(w, layer) {
   xw_end(w) # srs
   xw_elem(w, "provider", "gdal")
   xw_start(w, "noData")
-  for (band in seq_len(raster_style_band_count(layer$style))) {
+  for (band in raster_style_bands(layer$style)) {
     xw_empty(w, "noDataList", c(bandNo = band, useSrcNoData = "1"))
   }
   xw_end(w) # noData

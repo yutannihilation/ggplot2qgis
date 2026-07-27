@@ -261,9 +261,9 @@ style_raster_pseudocolor <- function(band, min, max, stops) {
   )
 }
 
-# The number of bands a raster style references (the raster maplayer
-# writes one <noDataList> entry per band).
-raster_style_band_count <- function(style) {
+# The bands a raster style references (the raster maplayer writes one
+# <noDataList> entry per referenced band).
+raster_style_bands <- function(style) {
   switch(style$type,
     raster_pseudocolor = style$band,
     stop("unknown raster style type: ", style$type)
