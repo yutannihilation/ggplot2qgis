@@ -237,7 +237,9 @@ qgs_tmap_layer_specs <- function(built, gradient_style, create_na_layer) {
   i <- 0L
   for (gi in seq_along(x3$tmo)) {
     tms <- x2$tmo[[gi]]$tms
-    d <- qgs_tmap_group_sf(tms, gi)
+    # Homogenized once per group: every layer's spec (and the group's
+    # single GeoPackage) shares this data.
+    d <- qgs_homogenize_geometry(qgs_tmap_group_sf(tms, gi))
     for (li in seq_along(x3$tmo[[gi]]$layers)) {
       i <- i + 1L
       lyr <- x3$tmo[[gi]]$layers[[li]]

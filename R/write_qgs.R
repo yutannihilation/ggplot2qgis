@@ -48,7 +48,8 @@ QGS_BASEMAPS <- list(
 #' Converts a ggplot2 plot whose layers are drawn from sf objects (or, for
 #' [ggplot2::geom_point()], [ggplot2::geom_path()], [ggplot2::geom_line()]
 #' and [ggplot2::geom_polygon()], from plain data frames, or from a
-#' SpatRaster via [tidyterra::geom_spatraster()]) into a QGIS project
+#' SpatRaster via [tidyterra::geom_spatraster()] or
+#' [tidyterra::geom_spatraster_rgb()]) into a QGIS project
 #' (`.qgs`) file. The data of each layer is saved as a GeoPackage (a
 #' GeoTIFF for raster layers) under `<path minus extension>_data/`, and
 #' the layer is styled after the plot's trained color scale:
@@ -146,14 +147,23 @@ QGS_BASEMAPS <- list(
 #' the `gradient_style` option does not apply to raster layers. Cells
 #' with missing values are transparent (the GeoTIFF's nodata value).
 #'
+#' A [tidyterra::geom_spatraster_rgb()] layer becomes a QGIS raster
+#' layer with a multiband (true color) renderer. The written GeoTIFF
+#' holds the three bands in red-green-blue order, with the layer's
+#' `r`/`g`/`b` band selection, `zlim`/`stretch` rescaling and the
+#' constant `alpha` (the renderer's opacity) carried over. A
+#' `max_col_value` other than 255 becomes a linear contrast stretch
+#' from `0..max_col_value`, matching how tidyterra scales the channel
+#' values.
+#'
 #' What is written is the data the plot draws: a raster larger than
-#' `geom_spatraster()`'s `maxcell` argument (500,000 cells by default)
+#' the geom's `maxcell` argument (500,000 cells by default)
 #' has already been downsampled by tidyterra when the layer was created
 #' and the original is not recoverable from the plot object — so the
-#' GeoTIFF stays small, but is not the full-resolution source. Only a
-#' single-band SpatRaster with a continuous (not binned) `fill` scale
-#' and `geom_spatraster()`'s default `fill` mapping (the band value) is
-#' supported for now; [tidyterra::geom_spatraster_rgb()],
+#' GeoTIFF stays small, but is not the full-resolution source. For
+#' `geom_spatraster()`, only a single-band SpatRaster with a continuous
+#' (not binned) `fill` scale and the default `fill` mapping (the band
+#' value) is supported for now;
 #' [tidyterra::geom_spatraster_contour()] and tidyterra's color tables
 #' (`scale_fill_coltab()`) are not.
 #'
@@ -214,8 +224,9 @@ QGS_BASEMAPS <- list(
 #' API, so a tmap version older than 4.4 is rejected.
 #'
 #' @param plot A ggplot object whose layers are backed by sf data, one of
-#'   the supported data.frame geoms (see *Data frame layers*) or
-#'   [tidyterra::geom_spatraster()] (see *SpatRaster layers*), or a tmap
+#'   the supported data.frame geoms (see *Data frame layers*),
+#'   [tidyterra::geom_spatraster()] or [tidyterra::geom_spatraster_rgb()]
+#'   (see *SpatRaster layers*), or a tmap
 #'   object with vector layers (see *tmap plots*).
 #' @param path Path of the `.qgs` file to write. Tilde paths (e.g. `~/x.qgs`)
 #'   are expanded.
@@ -383,17 +394,29 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
     layer <- layers[[i]]
 
     d <- layer_data[[i]]
-    is_raster <- qgs_is_spatraster_layer(layer)
+    is_rgb <- qgs_is_spatraster_rgb_layer(layer)
+    is_raster <- is_rgb || qgs_is_spatraster_layer(layer)
     sf_data <- inherits(d, "sf")
     is_text <- qgs_is_text_layer(layer)
     label <- NULL
     spat <- NULL
     if (is_raster) {
-      # geom_spatraster(): the layer carries the SpatRaster itself, which
-      # is written as a GeoTIFF below instead of a GeoPackage (see
-      # spatraster.R).
-      spat <- qgs_spatraster(layer, i)
-      crs <- sf::st_crs(terra::crs(spat))
+      # geom_spatraster()/geom_spatraster_rgb(): the layer carries the
+      # SpatRaster itself, which is written as a GeoTIFF below instead
+      # of a GeoPackage (see spatraster.R).
+      spat <- if (is_rgb) {
+        qgs_spatraster_rgb(layer, i)
+      } else {
+        qgs_spatraster(layer, i)
+      }
+      # A missing CRS is "" here (st_crs("") would error instead of
+      # returning the NA CRS the check below expects).
+      spat_crs <- terra::crs(spat)
+      crs <- if (nzchar(spat_crs)) {
+        sf::st_crs(spat_crs)
+      } else {
+        sf::st_crs(NA_integer_)
+      }
     } else if (is_text) {
       # geom_sf_text()/geom_sf_label()/geom_text()/geom_label(): a
       # labels-only layer — QGIS labeling on a layer whose features are
@@ -431,7 +454,11 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
         paste0(data_dir_name, "/", tif_file),
         layer_name,
         crs,
-        qgs_spatraster_style(built, i)
+        if (is_rgb) {
+          qgs_spatraster_rgb_style(layer, spat, i)
+        } else {
+          qgs_spatraster_style(built, i)
+        }
       )
       next
     }
@@ -441,6 +468,7 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
     if (file.exists(gpkg_path)) {
       unlink(gpkg_path)
     }
+    d <- qgs_homogenize_geometry(d)
     sf::st_write(d, gpkg_path, layer = layer_name, quiet = TRUE)
 
     geometry <- qgs_geometry_type(d, i)
@@ -786,6 +814,32 @@ qgs_geometry_type <- function(d, i) {
     MULTIPOLYGON = "Polygon",
     stop("layer ", i, ": unsupported geometry type ", type, call. = FALSE)
   )
+}
+
+# A geometry column mixing the single and MULTI variants of one family
+# (e.g. POLYGON + MULTIPOLYGON, which a terra::vect()-backed layer
+# produces) has the generic GEOMETRY type, which has no QGIS layer
+# geometry and no concrete GeoPackage geometry type — cast it to the
+# MULTI variant. Any other mix is returned as is and fails in
+# qgs_geometry_type().
+qgs_homogenize_geometry <- function(d) {
+  if (!inherits(d, "sf") ||
+    as.character(sf::st_geometry_type(d, by_geometry = FALSE)) != "GEOMETRY") {
+    return(d)
+  }
+  types <- as.character(unique(sf::st_geometry_type(d)))
+  if (length(types) == 0L) {
+    # No features, no family to pick (and all() below would be
+    # vacuously TRUE for the first one tried).
+    return(d)
+  }
+  for (family in c("POINT", "LINESTRING", "POLYGON")) {
+    multi <- paste0("MULTI", family)
+    if (all(types %in% c(family, multi))) {
+      return(sf::st_cast(d, multi))
+    }
+  }
+  d
 }
 
 # Resolves which of `fill`/`colour` drives the varying color of a layer:

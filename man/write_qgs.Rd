@@ -33,8 +33,9 @@ write_qgs(plot, path, ...)
 }
 \arguments{
 \item{plot}{A ggplot object whose layers are backed by sf data, one of
-the supported data.frame geoms (see \emph{Data frame layers}) or
-\code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}} (see \emph{SpatRaster layers}), or a tmap
+the supported data.frame geoms (see \emph{Data frame layers}),
+\code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}} or \code{\link[tidyterra:geom_spatraster_rgb]{tidyterra::geom_spatraster_rgb()}}
+(see \emph{SpatRaster layers}), or a tmap
 object with vector layers (see \emph{tmap plots}).}
 
 \item{path}{Path of the \code{.qgs} file to write. Tilde paths (e.g. \verb{~/x.qgs})
@@ -119,7 +120,8 @@ are not drawn.}
 Converts a ggplot2 plot whose layers are drawn from sf objects (or, for
 \code{\link[ggplot2:geom_point]{ggplot2::geom_point()}}, \code{\link[ggplot2:geom_path]{ggplot2::geom_path()}}, \code{\link[ggplot2:geom_line]{ggplot2::geom_line()}}
 and \code{\link[ggplot2:geom_polygon]{ggplot2::geom_polygon()}}, from plain data frames, or from a
-SpatRaster via \code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}}) into a QGIS project
+SpatRaster via \code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}} or
+\code{\link[tidyterra:geom_spatraster_rgb]{tidyterra::geom_spatraster_rgb()}}) into a QGIS project
 (\code{.qgs}) file. The data of each layer is saved as a GeoPackage (a
 GeoTIFF for raster layers) under \verb{<path minus extension>_data/}, and
 the layer is styled after the plot's trained color scale:
@@ -219,14 +221,23 @@ the ramp is exact \emph{and} the legend shows it as a continuous ramp, so
 the \code{gradient_style} option does not apply to raster layers. Cells
 with missing values are transparent (the GeoTIFF's nodata value).
 
+A \code{\link[tidyterra:geom_spatraster_rgb]{tidyterra::geom_spatraster_rgb()}} layer becomes a QGIS raster
+layer with a multiband (true color) renderer. The written GeoTIFF
+holds the three bands in red-green-blue order, with the layer's
+\code{r}/\code{g}/\code{b} band selection, \code{zlim}/\code{stretch} rescaling and the
+constant \code{alpha} (the renderer's opacity) carried over. A
+\code{max_col_value} other than 255 becomes a linear contrast stretch
+from \verb{0..max_col_value}, matching how tidyterra scales the channel
+values.
+
 What is written is the data the plot draws: a raster larger than
-\code{geom_spatraster()}'s \code{maxcell} argument (500,000 cells by default)
+the geom's \code{maxcell} argument (500,000 cells by default)
 has already been downsampled by tidyterra when the layer was created
 and the original is not recoverable from the plot object — so the
-GeoTIFF stays small, but is not the full-resolution source. Only a
-single-band SpatRaster with a continuous (not binned) \code{fill} scale
-and \code{geom_spatraster()}'s default \code{fill} mapping (the band value) is
-supported for now; \code{\link[tidyterra:geom_spatraster_rgb]{tidyterra::geom_spatraster_rgb()}},
+GeoTIFF stays small, but is not the full-resolution source. For
+\code{geom_spatraster()}, only a single-band SpatRaster with a continuous
+(not binned) \code{fill} scale and the default \code{fill} mapping (the band
+value) is supported for now;
 \code{\link[tidyterra:geom_spatraster_contour]{tidyterra::geom_spatraster_contour()}} and tidyterra's color tables
 (\code{scale_fill_coltab()}) are not.
 
