@@ -14,6 +14,16 @@ test_that("qgis_color matches QGIS's serialization", {
   )
 })
 
+test_that("qgis_color carries a non-opaque alpha", {
+  # Only a raster renderer's nodataColor needs this; symbol colors are
+  # always written opaque.
+  expect_equal(
+    qgis_color(c(255L, 0L, 0L), 128L),
+    "255,0,0,128,rgb:1,0,0,0.5019608"
+  )
+  expect_equal(qgis_color(c(0L, 0L, 0L), 0L), "0,0,0,0,rgb:0,0,0,0")
+})
+
 test_that("channels are formatted from the float32 value like QGIS", {
   # 8/255 rounds differently as a double (0.0313725) than as the float32
   # QGIS uses (0.0313726).

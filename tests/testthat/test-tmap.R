@@ -880,6 +880,43 @@ test_that("an unknown basemap provider is an error", {
   )
 })
 
+test_that("map decorations are dropped, drawn aux layers are not", {
+  skip_if_no_tmap()
+  World <- tmap_data("World")
+
+  base <- tmap::tm_shape(World) + tmap::tm_polygons(fill = "HPI")
+  dir <- local_out_dir()
+
+  # A graticule and the components tmap draws around the map carry no
+  # data of their own, so they are simply skipped.
+  plain <- file.path(dir, "plain.qgs")
+  decorated <- file.path(dir, "decorated.qgs")
+  write_qgs_quiet(base, plain)
+  write_qgs_quiet(
+    base + tmap::tm_graticules(labels.size = 0.7) + tmap::tm_compass() +
+      tmap::tm_scalebar() + tmap::tm_title("A title"),
+    decorated
+  )
+  # Only the volatile bits (ids, save time) may differ.
+  strip <- function(path) {
+    out <- read_qgs(path)
+    out <- gsub("<id>[^<]*</id>", "", out)
+    out <- gsub('(layerid|id)="[^"]*"', "", out)
+    out <- gsub('\\{[0-9a-f-]{36}\\}', "", out)
+    gsub('saveDateTime="[^"]*"', "", out)
+  }
+  expect_equal(strip(decorated), strip(plain))
+
+  # tm_tiles() draws content, so dropping it would lose the overlay.
+  expect_error(
+    write_qgs_quiet(
+      base + tmap::tm_tiles("OpenStreetMap"),
+      file.path(dir, "tiles.qgs")
+    ),
+    "unsupported tmap element: tm_tiles"
+  )
+})
+
 test_that("unsupported tmap features are errors", {
   skip_if_no_tmap()
   World <- tmap_data("World")
@@ -907,14 +944,14 @@ test_that("unsupported tmap features are errors", {
     "tm_text"
   )
 
-  # Raster shapes.
-  land <- tmap_data("land")
+  # Raster layers need a raster shape (raster shapes themselves are
+  # supported, see test-tmap-raster.R).
   expect_error(
     write_qgs_quiet(
-      tmap::tm_shape(land) + tmap::tm_raster("elevation"),
+      tmap::tm_shape(World) + tmap::tm_raster("HPI"),
       path
     ),
-    "raster|sf object"
+    "tm_raster\\(\\) needs a raster shape"
   )
 
   # Both fill and col mapped on the same layer.

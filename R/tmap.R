@@ -85,13 +85,33 @@ write_qgs.tmap <- function(plot, path, use_plot_crs = TRUE,
 
   # Layers sharing one tm_shape share one GeoPackage: the group's data is
   # written once (named after its first layer) and later layers of the
-  # group reference the same table under their own display name.
+  # group reference the same table under their own display name. Raster
+  # layers do not share: two variables of one shape can differ in value
+  # type and nodata value, which one GeoTIFF cannot hold (see
+  # R/tmap_raster.R).
   qgs_layers <- list()
   taken_names <- names
   written <- list()
   for (i in seq_along(specs)) {
     spec <- specs[[i]]
     layer_name <- names[[i]]
+
+    if (identical(spec$kind, "raster")) {
+      tif_file <- paste0(layer_name, ".tif")
+      tif_path <- file.path(data_dir, tif_file)
+      if (file.exists(tif_path)) {
+        unlink(tif_path)
+      }
+      terra::writeRaster(spec$raster, tif_path)
+      qgs_layers[[length(qgs_layers) + 1L]] <- raster_layer(
+        paste0(data_dir_name, "/", tif_file), # relative to the .qgs
+        layer_name,
+        sf::st_crs(terra::crs(spec$raster)),
+        spec$style
+      )
+      next
+    }
+
     group_key <- as.character(spec$group)
     info <- written[[group_key]]
     if (is.null(info)) {
@@ -237,16 +257,27 @@ qgs_tmap_layer_specs <- function(built, gradient_style, create_na_layer) {
   i <- 0L
   for (gi in seq_along(x3$tmo)) {
     tms <- x2$tmo[[gi]]$tms
-    # Homogenized once per group: every layer's spec (and the group's
-    # single GeoPackage) shares this data.
-    d <- qgs_homogenize_geometry(qgs_tmap_group_sf(tms, gi))
+    raster_group <- qgs_tmap_is_raster_group(tms)
+    if (raster_group) {
+      # Validated once per group; every layer of the group rebuilds its
+      # own band on this grid (see R/tmap_raster.R).
+      grid <- qgs_tmap_group_grid(tms, gi)
+    } else {
+      # Homogenized once per group: every layer's spec (and the group's
+      # single GeoPackage) shares this data.
+      d <- qgs_homogenize_geometry(qgs_tmap_group_sf(tms, gi))
+    }
     for (li in seq_along(x3$tmo[[gi]]$layers)) {
       i <- i + 1L
       lyr <- x3$tmo[[gi]]$layers[[li]]
       tml <- x2$tmo[[gi]]$tmls[[li]]
-      spec <- qgs_tmap_layer_spec(
-        built, d, tms, lyr, tml, i, gradient_style, create_na_layer
-      )
+      spec <- if (raster_group) {
+        qgs_tmap_raster_layer_spec(built, grid, tms, lyr, tml, i)
+      } else {
+        qgs_tmap_layer_spec(
+          built, d, tms, lyr, tml, i, gradient_style, create_na_layer
+        )
+      }
       if (!is.null(spec)) {
         spec$group <- gi
         specs[[length(specs) + 1L]] <- spec
@@ -259,12 +290,18 @@ qgs_tmap_layer_specs <- function(built, gradient_style, create_na_layer) {
   specs
 }
 
-# Aux layers: tm_basemap() is handled by qgs_tmap_basemap_layers();
-# everything else (graticules, overlay tiles, ...) has no QGIS-project
-# representation here.
+# Aux layers: tm_basemap() is handled by qgs_tmap_basemap_layers() and
+# tm_grid()/tm_graticules() is skipped — a graticule is map decoration
+# with no data of its own, like the tm_compass()/tm_scalebar()/tm_title()
+# components tmap keeps in `cmp` (which this converter never looks at).
+# Everything else drawn as an aux layer — tm_tiles() above all — carries
+# content that would silently vanish, so it stays an error.
+# TODO: a graticule could become QGIS's canvas grid decoration.
+QGS_TMAP_IGNORED_AUX <- "tm_grid"
+
 qgs_tmap_check_aux <- function(aux) {
   for (a in aux) {
-    if (!inherits(a, "tm_basemap")) {
+    if (!inherits(a, c("tm_basemap", QGS_TMAP_IGNORED_AUX))) {
       stop(
         "unsupported tmap element: ", class(a)[1L],
         call. = FALSE
@@ -280,8 +317,7 @@ qgs_tmap_group_sf <- function(tms, gi) {
   shp <- tms$shpTM$shp
   if (!inherits(shp, "sfc")) {
     stop(
-      "shape ", gi, ": only sf objects are supported; raster shapes ",
-      "(stars/terra) are not",
+      "shape ", gi, ": unsupported shape (not an sf object or a raster)",
       call. = FALSE
     )
   }
@@ -321,6 +357,12 @@ qgs_tmap_layer_spec <- function(built, d, tms, lyr, tml, i, gradient_style,
     "lines"
   } else if ("tm_data_symbols" %in% mfun) {
     "symbols"
+  } else if ("tm_data_raster" %in% mfun) {
+    stop(
+      "layer ", i, " (", qgs_tmap_layer_label(lyr), "): tm_raster() needs a ",
+      "raster shape (stars/terra) in tm_shape()",
+      call. = FALSE
+    )
   } else {
     stop(
       "layer ", i, ": unsupported tmap layer type (",
@@ -456,6 +498,7 @@ qgs_tmap_layer_spec <- function(built, d, tms, lyr, tml, i, gradient_style,
   }
 
   list(
+    kind = "vector",
     data = d,
     name = tms$shp_name,
     geometry = geometry,
@@ -482,17 +525,24 @@ qgs_tmap_na_color <- function(d, ids, lyr, aes, attribute) {
   color
 }
 
-# Resolves the data column a mapped aesthetic refers to, rejecting scale
-# constructors whose trained result cannot drive a QGIS renderer.
-qgs_tmap_attribute <- function(tml, aes, d, i) {
-  aes_spec <- tml$mapping.aes[[aes]]
-  if (!aes_spec$scale$FUN %in% QGS_TMAP_SCALE_FUNS) {
+# Rejects scale constructors whose trained result cannot drive a QGIS
+# renderer (tm_scale_rgb(), tm_scale_discrete(), the bivariate ones, ...).
+qgs_tmap_check_scale <- function(tml, aes, i) {
+  scale <- tml$mapping.aes[[aes]]$scale
+  if (!is.null(scale) && !scale$FUN %in% QGS_TMAP_SCALE_FUNS) {
     stop(
-      "layer ", i, ": unsupported scale (", class(aes_spec$scale)[[1L]],
+      "layer ", i, ": unsupported scale (", class(scale)[[1L]],
       ") for `", aes, "`",
       call. = FALSE
     )
   }
+  invisible(NULL)
+}
+
+# Resolves the data column a mapped aesthetic refers to.
+qgs_tmap_attribute <- function(tml, aes, d, i) {
+  qgs_tmap_check_scale(tml, aes, i)
+  aes_spec <- tml$mapping.aes[[aes]]
   attribute <- unname(aes_spec$vars[[1L]])
   if (!attribute %in% names(d)) {
     stop(
@@ -563,19 +613,14 @@ qgs_tmap_mapped_style <- function(d, ids, lyr, tml, attribute, i, kind, aes,
 }
 
 # tm_scale_intervals(): the legend carries the resolved break boundaries
-# (dvalues) and one color per bin (vvalues; plus a trailing NA color when
+# (dvalues), one color per bin (vvalues; plus a trailing NA color when
 # the legend shows missings — QGIS graduated renderers have no NA slot,
-# so NA features are simply not drawn).
-qgs_tmap_binned_style <- function(leg, attribute, i, gradient_style) {
-  if (gradient_style == "continuous") {
-    # Per layer, not per plot, like the ggplot2 path.
-    warning(
-      "layer ", i, ": `gradient_style = \"continuous\"` does not apply ",
-      "to an intervals scale; the exact bins are kept",
-      call. = FALSE
-    )
-  }
+# so NA features are simply not drawn) and one label per bin. Normalized
+# here into list(boundaries, colors, labels) for both the vector and the
+# raster renderer.
+qgs_tmap_intervals <- function(leg, attribute, i) {
   colors <- leg$vvalues
+  labels <- leg$labels
   # tm_scale_intervals(label.style = "cont"/"log10") stores the legend as
   # collapsed gradient strings instead of one color per bin.
   if (any(grepl("_", colors, fixed = TRUE))) {
@@ -587,16 +632,18 @@ qgs_tmap_binned_style <- function(leg, attribute, i, gradient_style) {
   }
   if (isTRUE(leg$na.show)) {
     colors <- colors[-length(colors)]
+    labels <- labels[-length(labels)]
   }
-  # tmap stores the legend colors bottom-up when tm_legend(reverse = TRUE)
-  # while dvalues stay ascending; the features themselves are colored from
-  # the unreversed palette.
+  # tmap stores the legend bottom-up when tm_legend(reverse = TRUE) while
+  # dvalues stay ascending; the features themselves are colored from the
+  # unreversed palette.
   if (isTRUE(leg$reverse)) {
     colors <- rev(colors)
+    labels <- rev(labels)
   }
   boundaries <- leg$dvalues
   n <- length(boundaries) - 1L
-  if (n < 1L || length(colors) != n) {
+  if (n < 1L || length(colors) != n || length(labels) != n) {
     stop(
       "layer ", i, ": cannot map `", attribute,
       "` to binned colors (the trained scale is degenerate)",
@@ -614,11 +661,24 @@ qgs_tmap_binned_style <- function(leg, attribute, i, gradient_style) {
       call. = FALSE
     )
   }
-  if (!all(keep)) {
-    colors <- colors[keep]
-    boundaries <- c(boundaries[[1L]], boundaries[-1L][keep])
+  list(
+    boundaries = c(boundaries[[1L]], boundaries[-1L][keep]),
+    colors = grDevices::col2rgb(colors[keep]),
+    labels = labels[keep]
+  )
+}
+
+qgs_tmap_binned_style <- function(leg, attribute, i, gradient_style) {
+  if (gradient_style == "continuous") {
+    # Per layer, not per plot, like the ggplot2 path.
+    warning(
+      "layer ", i, ": `gradient_style = \"continuous\"` does not apply ",
+      "to an intervals scale; the exact bins are kept",
+      call. = FALSE
+    )
   }
-  style_binned(attribute, boundaries, grDevices::col2rgb(colors))
+  bins <- qgs_tmap_intervals(leg, attribute, i)
+  style_binned(attribute, bins$boundaries, bins$colors)
 }
 
 # tm_scale_categorical() / tm_scale_ordinal(): the category values and

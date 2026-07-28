@@ -96,11 +96,10 @@ write_qgs(p, "cyl.qgs")
 
 ### tmap
 
-A [tmap](https://r-tmap.github.io/tmap/) (>= 4.4) object with vector layers
-works the same way, reproducing tmap's own trained color scales
-(`tm_scale_intervals()` with its exact class boundaries,
-`tm_scale_categorical()`, `tm_scale_continuous()`) and converting
-`tm_basemap()` to an XYZ tile layer:
+A [tmap](https://r-tmap.github.io/tmap/) (>= 4.4) object works the same way,
+reproducing tmap's own trained color scales (`tm_scale_intervals()` with its
+exact class boundaries, `tm_scale_categorical()`, `tm_scale_continuous()`) and
+converting `tm_basemap()` to an XYZ tile layer:
 
 ``` r
 library(tmap)
@@ -112,6 +111,21 @@ x <- tm_basemap("OpenStreetMap") +
 write_qgs(x, "nc.qgs")
 ```
 
+`tm_raster()` on a raster shape (a stars object or a `SpatRaster`) becomes a
+QGIS raster layer, with the classes, colors and legend labels tmap trained —
+a discrete color ramp for `tm_scale_intervals()`, a paletted renderer for a
+categorical one, an interpolated ramp for `tm_scale_continuous()`:
+
+``` r
+library(stars)
+
+data(land, package = "tmap")
+
+x <- tm_shape(land) + tm_raster("cover")
+
+write_qgs(x, "land.qgs")
+```
+
 ## TODOs
 
 - [x] Support labels (`geom_sf_text()` / `geom_sf_label()` / `geom_text()` /
@@ -119,11 +133,13 @@ write_qgs(x, "nc.qgs")
 - [ ] Support rasters
   - [x] tidyterra's `geom_spatraster()` (single-band with a continuous
     fill scale)
-  - [ ] multi-band and RGB rasters (`geom_spatraster_rgb()`), contours
+  - [x] RGB rasters (`geom_spatraster_rgb()`)
+  - [ ] multi-band `geom_spatraster()`, contours
     (`geom_spatraster_contour()`)
-  - [ ] tmap's `tm_raster()`
+  - [x] tmap's `tm_raster()`
+  - [ ] tmap's `tm_rgb()` / `tm_rgba()`
 - [x] Support tidyterra vector (`geom_spatvector()` and its text/label
   variants)
-- [x] Support tmap (vector only)
+- [x] Support tmap
   - [ ] symbol size / alpha / line type constants
   - [ ] `tm_symbols()` on polygons (centroids)

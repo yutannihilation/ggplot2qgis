@@ -127,6 +127,33 @@ lives in `<rastershader>/<colorrampshader>`:
 - `<rampLegendSettings>` (with a `<numericFormat id="basic">` child) is
   static legend boilerplate, byte-identical in both samples.
 
+Two renderer attributes matter beyond the samples (checked against
+QGIS 4.2.0 driven through pyqgis, which is also where the paletted
+layout below comes from):
+
+- `opacity` is the layer opacity, `"1"` in the samples.
+- `nodataColor` is the color the source's nodata cells are painted in.
+  It is a QGIS *color string* (`"255,0,255,255,rgb:1,0,1,1"`), not a hex
+  code; empty means "leave them transparent", QGIS's default.
+
+#### Paletted, a.k.a. unique values (`<rasterrenderer type="paletted">`)
+
+Colors one band (attribute `band`, 1-based) by exact cell value. There is
+no `<rastershader>` and no `classificationMin`/`Max`; instead a
+`<colorPalette>` lists one entry per value:
+
+```xml
+<colorPalette>
+  <paletteEntry alpha="255" color="#e41a1c" label="forest" value="1"/>
+  <paletteEntry alpha="255" color="#377eb8" label="water"  value="2"/>
+</colorPalette>
+```
+
+`label` is what the legend shows, so unlike the vector categorized
+renderer a generator can carry over the source's category labels. Cells
+matching no entry are not drawn. An optional `<colorramp>` (typically
+`type="randomcolors"`) is only informational, used when re-classifying.
+
 #### Multiband color, a.k.a. true color (`<rasterrenderer type="multibandcolor">`)
 
 Maps bands to RGB channels via `redBand` / `greenBand` / `blueBand`

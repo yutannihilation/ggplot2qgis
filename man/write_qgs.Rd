@@ -36,8 +36,8 @@ write_qgs(plot, path, ...)
 SpatVector data, see \emph{SpatVector layers}), one of the supported
 data.frame geoms (see \emph{Data frame layers}),
 \code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}} or \code{\link[tidyterra:geom_spatraster_rgb]{tidyterra::geom_spatraster_rgb()}}
-(see \emph{SpatRaster layers}), or a tmap
-object with vector layers (see \emph{tmap plots}).}
+(see \emph{SpatRaster layers}), or a tmap object (see \emph{tmap plots} and
+\emph{tmap raster layers}).}
 
 \item{path}{Path of the \code{.qgs} file to write. Tilde paths (e.g. \verb{~/x.qgs})
 are expanded.}
@@ -68,7 +68,9 @@ dropdown.
 
 Binned scales are unaffected: their bins are exact in a graduated
 renderer, so there is nothing to trade off. Requesting \code{"continuous"}
-for a layer with a binned scale keeps the bins, with a warning.}
+for a layer with a binned scale keeps the bins, with a warning.
+Raster layers are unaffected too: their shader is exact \emph{and}
+legend-friendly, so there is no trade-off to make.}
 
 \item{overwrite}{If \code{FALSE} (the default), writing to a \code{path} that already
 exists is an error. Set to \code{TRUE} to overwrite it.}
@@ -107,10 +109,11 @@ keys are:
 XYZ tiles are in EPSG:3857; QGIS reprojects them to the project CRS on
 the fly.}
 
-\item{create_na_layer}{tmap only. If \code{TRUE} (the default), features whose
-mapped value is missing become a separate \code{"<layer> (missing value)"}
-layer in tmap's \code{value.na} color (see \emph{tmap plots}). If \code{FALSE}, they
-are not drawn.}
+\item{create_na_layer}{tmap vector layers only. If \code{TRUE} (the default),
+features whose mapped value is missing become a separate
+\code{"<layer> (missing value)"} layer in tmap's \code{value.na} color (see
+\emph{tmap plots}). If \code{FALSE}, they are not drawn. Raster layers express
+missing cells exactly and ignore this (see \emph{tmap raster layers}).}
 
 \item{...}{Passed on to the methods.}
 }
@@ -275,10 +278,11 @@ not recorded anywhere in the layer. Pass \code{layer_names} for full control.
 }
 
 \section{tmap plots}{
-A tmap (>= 4.4) object with vector layers is converted the same way:
+A tmap (>= 4.4) object is converted the same way:
 \code{tm_polygons()}/\code{tm_fill()}/\code{tm_borders()}, \code{tm_lines()}, and
 \code{tm_symbols()}/\code{tm_dots()}/\code{tm_bubbles()}/\code{tm_squares()} (on point data)
-are supported, including \code{\link[tmap:qtm]{tmap::qtm()}} maps. The color scales are
+are supported, including \code{\link[tmap:qtm]{tmap::qtm()}} maps, as is \code{\link[tmap:tm_raster]{tmap::tm_raster()}}
+on a raster shape (see \emph{tmap raster layers}). The color scales are
 reproduced from tmap's own trained scales:
 \itemize{
 \item \code{\link[tmap:tm_scale_intervals]{tmap::tm_scale_intervals()}} (any classification style) becomes a
@@ -313,16 +317,71 @@ layer. \code{\link[tmap:tm_basemap]{tmap::tm_basemap()}} layers become XYZ tile 
 (overriding the \code{basemap} argument): a URL template is used as is, a
 provider name is resolved via \code{\link[maptiles:get_providers]{maptiles::get_providers()}}, and with
 several basemaps only the first one is checked (visible) in the layer
-tree. Rasters, facets, \code{tm_text()} and the other scale types are errors.
+tree. Facets, \code{tm_text()} and the other scale types are errors.
+
+A caveat on the bin edges: tmap's interval bins are left-closed
+(\verb{[a, b)}) while every QGIS classed renderer is right-closed
+(\verb{(a, b]}), so a feature or cell whose value falls exactly on an
+interior break renders one class lower in QGIS than in tmap.
 
 The project CRS defaults to the tmap display CRS (\code{use_plot_crs = TRUE}
-for tmap objects): \code{\link[tmap:tm_crs]{tmap::tm_crs()}} or the main shape's CRS — or
+for tmap objects): [tmap::tm_crs()] or the main shape's CRS — or
 EPSG:3857 when the map has basemaps, which is how tmap itself resolves
 it — so the project opens looking like the tmap plot, zoomed to the
 main shape's bounding box. \code{use_plot_crs = FALSE} forces EPSG:3857.
 
 The conversion relies on tmap internals that are not part of its public
 API, so a tmap version older than 4.4 is rejected.
+}
+
+\section{tmap raster layers}{
+\code{\link[tmap:tm_raster]{tmap::tm_raster()}} on a raster shape (a stars object, a SpatRaster or
+a RasterLayer passed to \code{\link[tmap:tm_shape]{tmap::tm_shape()}}) becomes a QGIS raster
+layer, written as a single-band GeoTIFF next to the project. The
+renderer comes from the same trained scale as for vector layers:
+\itemize{
+\item \code{\link[tmap:tm_scale_intervals]{tmap::tm_scale_intervals()}} (the default for a numeric variable)
+becomes a \code{singlebandpseudocolor} renderer with a DISCRETE color-ramp
+shader holding tmap's exact breaks, colors and bin labels,
+\item \code{\link[tmap:tm_scale_categorical]{tmap::tm_scale_categorical()}} and \code{\link[tmap:tm_scale_ordinal]{tmap::tm_scale_ordinal()}} become
+a \code{paletted} renderer with one entry per value. A factor variable is
+written as its integer codes and labeled with the level names;
+values that no cell has are dropped,
+\item \code{\link[tmap:tm_scale_continuous]{tmap::tm_scale_continuous()}} becomes a \code{singlebandpseudocolor}
+renderer with an INTERPOLATED shader, which reproduces the gradient
+exactly and shows a continuous legend ramp — so \code{gradient_style} does
+not apply to raster layers.
+}
+
+What is written is the grid tmap \emph{draws}: tmap downsamples a raster
+beyond \code{tmap_options(raster.max_cells =)} and reprojects it to the
+display CRS before the scales are trained, and the original is not
+recoverable from the plot object.
+
+Missing cells become the GeoTIFF's nodata value and are painted in
+tmap's \code{value.na} color through the renderer's \code{nodataColor} — exactly,
+so raster layers never get the separate \code{"(missing value)"} layer that
+vector layers do and \code{create_na_layer} does not apply to them. A
+constant \code{col_alpha} becomes the layer opacity; a per-cell one is an
+error. Unlike vector layers, raster layers of one \code{\link[tmap:tm_shape]{tmap::tm_shape()}} do
+\emph{not} share a file: each writes its own single-band GeoTIFF, since two
+variables can differ in value type and nodata value.
+
+[tmap::tm_rgb()]/[tmap::tm_rgba()], [tmap::tm_scale_discrete()], and
+curvilinear, rotated or irregularly spaced grids are errors.
+
+[a, b)\verb{) while every QGIS classed renderer is right-closed (}(a, b]: R:a,\%20b)\%60)\%20while\%20every\%20QGIS\%20classed\%20renderer\%20is\%20right-closed\%0A(\%60(a,\%20b
+[tmap::tm_crs()]: R:tmap::tm_crs()
+\code{\link[tmap:tm_raster]{tmap::tm_raster()}}: R:tmap::tm_raster()
+\code{\link[tmap:tm_shape]{tmap::tm_shape()}}: R:tmap::tm_shape()
+\code{\link[tmap:tm_scale_intervals]{tmap::tm_scale_intervals()}}: R:tmap::tm_scale_intervals()
+\code{\link[tmap:tm_scale_categorical]{tmap::tm_scale_categorical()}}: R:tmap::tm_scale_categorical()
+\code{\link[tmap:tm_scale_ordinal]{tmap::tm_scale_ordinal()}}: R:tmap::tm_scale_ordinal()
+\code{\link[tmap:tm_scale_continuous]{tmap::tm_scale_continuous()}}: R:tmap::tm_scale_continuous()
+\code{\link[tmap:tm_shape]{tmap::tm_shape()}}: R:tmap::tm_shape()
+[tmap::tm_rgb()]: R:tmap::tm_rgb()
+[tmap::tm_rgba()]: R:tmap::tm_rgba()
+[tmap::tm_scale_discrete()]: R:tmap::tm_scale_discrete()
 }
 
 \examples{

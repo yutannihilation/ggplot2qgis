@@ -200,10 +200,11 @@ QGS_BASEMAPS <- list(
 #'
 #' # tmap plots
 #'
-#' A tmap (>= 4.4) object with vector layers is converted the same way:
+#' A tmap (>= 4.4) object is converted the same way:
 #' `tm_polygons()`/`tm_fill()`/`tm_borders()`, `tm_lines()`, and
 #' `tm_symbols()`/`tm_dots()`/`tm_bubbles()`/`tm_squares()` (on point data)
-#' are supported, including [tmap::qtm()] maps. The color scales are
+#' are supported, including [tmap::qtm()] maps, as is [tmap::tm_raster()]
+#' on a raster shape (see *tmap raster layers*). The color scales are
 #' reproduced from tmap's own trained scales:
 #'
 #' - [tmap::tm_scale_intervals()] (any classification style) becomes a
@@ -237,7 +238,19 @@ QGS_BASEMAPS <- list(
 #' (overriding the `basemap` argument): a URL template is used as is, a
 #' provider name is resolved via [maptiles::get_providers()], and with
 #' several basemaps only the first one is checked (visible) in the layer
-#' tree. Rasters, facets, `tm_text()` and the other scale types are errors.
+#' tree. Facets, `tm_text()` and the other scale types are errors.
+#'
+#' Map decorations are dropped: [tmap::tm_graticules()]/[tmap::tm_grid()],
+#' and the components tmap draws around the map
+#' ([tmap::tm_compass()], [tmap::tm_scalebar()], [tmap::tm_title()],
+#' [tmap::tm_credits()], ...). They carry no data of their own, and QGIS
+#' offers its own equivalents. [tmap::tm_tiles()] is *not* dropped but an
+#' error: it draws content that would silently go missing.
+#'
+#' A caveat on the bin edges: tmap's interval bins are left-closed
+#' (`[a, b)`) while every QGIS classed renderer is right-closed
+#' (`(a, b]`), so a feature or cell whose value falls exactly on an
+#' interior break renders one class lower in QGIS than in tmap.
 #'
 #' The project CRS defaults to the tmap display CRS (`use_plot_crs = TRUE`
 #' for tmap objects): [tmap::tm_crs()] or the main shape's CRS — or
@@ -248,12 +261,48 @@ QGS_BASEMAPS <- list(
 #' The conversion relies on tmap internals that are not part of its public
 #' API, so a tmap version older than 4.4 is rejected.
 #'
+#' # tmap raster layers
+#'
+#' [tmap::tm_raster()] on a raster shape (a stars object, a SpatRaster or
+#' a RasterLayer passed to [tmap::tm_shape()]) becomes a QGIS raster
+#' layer, written as a single-band GeoTIFF next to the project. The
+#' renderer comes from the same trained scale as for vector layers:
+#'
+#' - [tmap::tm_scale_intervals()] (the default for a numeric variable)
+#'   becomes a `singlebandpseudocolor` renderer with a DISCRETE color-ramp
+#'   shader holding tmap's exact breaks, colors and bin labels,
+#' - [tmap::tm_scale_categorical()] and [tmap::tm_scale_ordinal()] become
+#'   a `paletted` renderer with one entry per value. A factor variable is
+#'   written as its integer codes and labeled with the level names;
+#'   values that no cell has are dropped,
+#' - [tmap::tm_scale_continuous()] becomes a `singlebandpseudocolor`
+#'   renderer with an INTERPOLATED shader, which reproduces the gradient
+#'   exactly and shows a continuous legend ramp — so `gradient_style` does
+#'   not apply to raster layers.
+#'
+#' What is written is the grid tmap *draws*: tmap downsamples a raster
+#' beyond `tmap_options(raster.max_cells =)` and reprojects it to the
+#' display CRS before the scales are trained, and the original is not
+#' recoverable from the plot object.
+#'
+#' Missing cells become the GeoTIFF's nodata value and are painted in
+#' tmap's `value.na` color through the renderer's `nodataColor` — exactly,
+#' so raster layers never get the separate `"(missing value)"` layer that
+#' vector layers do and `create_na_layer` does not apply to them. A
+#' constant `col_alpha` becomes the layer opacity; a per-cell one is an
+#' error. Unlike vector layers, raster layers of one [tmap::tm_shape()] do
+#' *not* share a file: each writes its own single-band GeoTIFF, since two
+#' variables can differ in value type and nodata value.
+#'
+#' [tmap::tm_rgb()]/[tmap::tm_rgba()], [tmap::tm_scale_discrete()], and
+#' curvilinear, rotated or irregularly spaced grids are errors.
+#'
 #' @param plot A ggplot object whose layers are backed by sf data (or
 #'   SpatVector data, see *SpatVector layers*), one of the supported
 #'   data.frame geoms (see *Data frame layers*),
 #'   [tidyterra::geom_spatraster()] or [tidyterra::geom_spatraster_rgb()]
-#'   (see *SpatRaster layers*), or a tmap
-#'   object with vector layers (see *tmap plots*).
+#'   (see *SpatRaster layers*), or a tmap object (see *tmap plots* and
+#'   *tmap raster layers*).
 #' @param path Path of the `.qgs` file to write. Tilde paths (e.g. `~/x.qgs`)
 #'   are expanded.
 #' @param use_plot_crs If `TRUE`, the project (map canvas) CRS is the plot's
@@ -281,6 +330,8 @@ QGS_BASEMAPS <- list(
 #'   Binned scales are unaffected: their bins are exact in a graduated
 #'   renderer, so there is nothing to trade off. Requesting `"continuous"`
 #'   for a layer with a binned scale keeps the bins, with a warning.
+#'   Raster layers are unaffected too: their shader is exact *and*
+#'   legend-friendly, so there is no trade-off to make.
 #' @param basemap An XYZ tile layer to add below the vector layers, or `NULL`
 #'   (the default) for none. Either a predefined key or an arbitrary XYZ URL
 #'   template (a string containing the `{z}`, `{x}` and `{y}` placeholders,
@@ -295,10 +346,11 @@ QGS_BASEMAPS <- list(
 #'
 #'   XYZ tiles are in EPSG:3857; QGIS reprojects them to the project CRS on
 #'   the fly.
-#' @param create_na_layer tmap only. If `TRUE` (the default), features whose
-#'   mapped value is missing become a separate `"<layer> (missing value)"`
-#'   layer in tmap's `value.na` color (see *tmap plots*). If `FALSE`, they
-#'   are not drawn.
+#' @param create_na_layer tmap vector layers only. If `TRUE` (the default),
+#'   features whose mapped value is missing become a separate
+#'   `"<layer> (missing value)"` layer in tmap's `value.na` color (see
+#'   *tmap plots*). If `FALSE`, they are not drawn. Raster layers express
+#'   missing cells exactly and ignore this (see *tmap raster layers*).
 #' @param overwrite If `FALSE` (the default), writing to a `path` that already
 #'   exists is an error. Set to `TRUE` to overwrite it.
 #' @param layer_names Names for the layers, used for the GeoPackage (or
