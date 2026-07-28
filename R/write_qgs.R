@@ -50,9 +50,12 @@ QGS_BASEMAPS <- list(
 #' and [ggplot2::geom_polygon()], from plain data frames, or from a
 #' SpatRaster via [tidyterra::geom_spatraster()] or
 #' [tidyterra::geom_spatraster_rgb()]) into a QGIS project
-#' (`.qgs`) file. The data of each layer is saved as a GeoPackage (a
-#' GeoTIFF for raster layers) under `<path minus extension>_data/`, and
-#' the layer is styled after the plot's trained color scale:
+#' (`.qgs`) file. A SpatVector layer, drawn with
+#' [tidyterra::geom_spatvector()] or with `geom_sf()` itself, counts as an
+#' sf layer (see *SpatVector layers*). The data of each layer is saved as
+#' a GeoPackage (a GeoTIFF for raster layers) under
+#' `<path minus extension>_data/`, and the layer is styled after the
+#' plot's trained color scale:
 #'
 #' - a continuous `fill`/`colour` scale becomes a graduated renderer with
 #'   fine-grained equal-interval classes (or a continuously interpolated
@@ -173,6 +176,28 @@ QGS_BASEMAPS <- list(
 #' whose geometries are all empty is skipped and does not count for
 #' `layer_names`.
 #'
+#' # SpatVector layers
+#'
+#' [tidyterra::geom_spatvector()], [tidyterra::geom_spatvector_text()] and
+#' [tidyterra::geom_spatvector_label()] are wrappers of
+#' [ggplot2::geom_sf()], [ggplot2::geom_sf_text()] and
+#' [ggplot2::geom_sf_label()], and tidyterra registers a `fortify()` method
+#' that turns a `SpatVector` into an sf object when the plot or the layer is
+#' created. Such a layer is therefore an ordinary sf layer here, converted
+#' by all the rules above, and so is a plain `geom_sf()` layer given a
+#' `SpatVector` as its data. `terra::vect()` typically produces a geometry
+#' column mixing the single and `MULTI` variants of one type (e.g.
+#' `POLYGON` and `MULTIPOLYGON`), which is cast to the `MULTI` variant
+#' since a GeoPackage table holds a single geometry type.
+#'
+#' One consequence of the wrapping shows up in the derived layer names:
+#' ggplot2 records the *wrapped* `geom_sf()` call as the layer's
+#' constructor, so the name comes from the variable the `SpatVector` is
+#' bound to rather than from the call. When there is no such variable (e.g.
+#' `geom_spatvector(data = terra::vect(path))`), the geom fallback names
+#' the layer `geom_sf`, not `geom_spatvector` — the wrapper's own name is
+#' not recorded anywhere in the layer. Pass `layer_names` for full control.
+#'
 #' # tmap plots
 #'
 #' A tmap (>= 4.4) object with vector layers is converted the same way:
@@ -223,8 +248,9 @@ QGS_BASEMAPS <- list(
 #' The conversion relies on tmap internals that are not part of its public
 #' API, so a tmap version older than 4.4 is rejected.
 #'
-#' @param plot A ggplot object whose layers are backed by sf data, one of
-#'   the supported data.frame geoms (see *Data frame layers*),
+#' @param plot A ggplot object whose layers are backed by sf data (or
+#'   SpatVector data, see *SpatVector layers*), one of the supported
+#'   data.frame geoms (see *Data frame layers*),
 #'   [tidyterra::geom_spatraster()] or [tidyterra::geom_spatraster_rgb()]
 #'   (see *SpatRaster layers*), or a tmap
 #'   object with vector layers (see *tmap plots*).
@@ -650,13 +676,24 @@ qgs_check_layer_name <- function(names, what) {
 }
 
 qgs_derived_layer_name <- function(plot, layer, i) {
+  d <- layer$data
+  if (is.null(d) || inherits(d, "waiver")) {
+    d <- plot@data
+  }
+
   # The layer's constructor is the geom call as the user wrote it, so a
   # bare symbol passed as its `data` argument is the variable name (`data`
-  # is never positional: `mapping` comes first in every geom).
+  # is never positional: `mapping` comes first in every geom). The symbol
+  # must name data, though: for a geom wrapping another one (e.g.
+  # tidyterra::geom_spatvector(), which calls geom_sf()) ggplot2 records
+  # the inner call, whose `data` argument is the wrapper's own parameter
+  # name rather than anything the user wrote. Such a symbol falls through
+  # to the rules below.
   cons <- layer$constructor
   if (is.call(cons)) {
     data_arg <- rlang::call_args(cons)[["data"]]
-    if (rlang::is_symbol(data_arg)) {
+    if (rlang::is_symbol(data_arg) &&
+      qgs_symbol_is_data(data_arg, plot@plot_env)) {
       return(qgs_sanitize_layer_name(rlang::as_string(data_arg), i))
     }
   }
@@ -665,10 +702,6 @@ qgs_derived_layer_name <- function(plot, layer, i) {
   # bound to in the environment the plot was created in, e.g. `nc` for
   # ggplot(nc). Only when the match is unambiguous; a guess is worse
   # than the geom fallback.
-  d <- layer$data
-  if (is.null(d) || inherits(d, "waiver")) {
-    d <- plot@data
-  }
   name <- qgs_data_binding_name(d, plot@plot_env)
   if (!is.null(name)) {
     return(qgs_sanitize_layer_name(name, i))
@@ -684,9 +717,9 @@ qgs_derived_layer_name <- function(plot, layer, i) {
   paste0("layer", i)
 }
 
-# The single variable in `env` (not its parents) bound to exactly `d`, or
-# NULL if there is none or more than one. Bindings that cannot be read
-# (e.g. an active binding that errors) are skipped.
+# The single variable in `env` (not its parents) holding `d`, or NULL if
+# there is none or more than one. Bindings that cannot be read (e.g. an
+# active binding that errors) are skipped.
 qgs_data_binding_name <- function(d, env) {
   if (!is.data.frame(d) || !is.environment(env)) {
     return(NULL)
@@ -697,7 +730,7 @@ qgs_data_binding_name <- function(d, env) {
       get(name, envir = env, inherits = FALSE),
       error = function(e) NULL
     )
-    if (identical(obj, d)) {
+    if (qgs_is_layer_data(obj, d)) {
       if (!is.null(hit)) {
         return(NULL)
       }
@@ -705,6 +738,48 @@ qgs_data_binding_name <- function(d, env) {
     }
   }
   hit
+}
+
+# Whether the variable `sym` names could be a layer's data: a data frame,
+# or a terra Spat* object, which the tidyterra geoms turn into one. It is
+# looked up from the environment the plot was created in and its parents
+# (a plot built inside a function commonly refers to data from the
+# caller).
+#
+# This is what tells a user-written `data` argument from the one a geom
+# wrapping another geom leaves in the recorded call: with
+# tidyterra::geom_spatvector(), which calls geom_sf(data = data, ...),
+# the symbol is the wrapper's own parameter name and resolves to
+# utils::data(), a function.
+qgs_symbol_is_data <- function(sym, env) {
+  if (!is.environment(env)) {
+    return(FALSE)
+  }
+  obj <- tryCatch(
+    get(rlang::as_string(sym), envir = env, inherits = TRUE),
+    error = function(e) NULL
+  )
+  is.data.frame(obj) || inherits(obj, c("SpatVector", "SpatRaster"))
+}
+
+# Whether `obj` is the object the layer's data `d` came from. ggplot2
+# fortifies data when the plot and the layer are created, so an object
+# with a fortify() method is no longer identical to what the layer holds:
+# a SpatVector (tidyterra registers fortify.SpatVector(), which is all
+# that makes geom_spatvector() work — it is geom_sf()) has already become
+# an sf object by the time write_qgs() sees the plot. nrow() is compared
+# first so a large SpatVector is only converted when it could match at
+# all.
+qgs_is_layer_data <- function(obj, d) {
+  if (identical(obj, d)) {
+    return(TRUE)
+  }
+  if (!inherits(obj, "SpatVector") || !is.data.frame(d) ||
+    nrow(obj) != nrow(d)) {
+    return(FALSE)
+  }
+  fortified <- tryCatch(ggplot2::fortify(obj), error = function(e) NULL)
+  identical(fortified, d)
 }
 
 qgs_sanitize_layer_name <- function(name, i) {

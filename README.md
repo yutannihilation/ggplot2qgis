@@ -78,6 +78,22 @@ p <- ggplot() +
 write_qgs(p, "volcano.qgs")
 ```
 
+### SpatVectors
+
+tidyterra's `geom_spatvector()` (and `geom_spatvector_text()` /
+`geom_spatvector_label()`) works too — they are wrappers of `geom_sf()`, and
+tidyterra's `fortify()` method turns the `SpatVector` into an sf object, so
+such a layer is styled by exactly the same rules:
+
+``` r
+cyl <- terra::vect(system.file("extdata/cyl.gpkg", package = "tidyterra"))
+
+p <- ggplot(cyl) +
+  geom_spatvector(aes(fill = name))
+
+write_qgs(p, "cyl.qgs")
+```
+
 ### tmap
 
 A [tmap](https://r-tmap.github.io/tmap/) (>= 4.4) object with vector layers
@@ -106,7 +122,8 @@ write_qgs(x, "nc.qgs")
   - [ ] multi-band and RGB rasters (`geom_spatraster_rgb()`), contours
     (`geom_spatraster_contour()`)
   - [ ] tmap's `tm_raster()`
-- [ ] Support tidyterra vector (`geom_spatvector()`)
+- [x] Support tidyterra vector (`geom_spatvector()` and its text/label
+  variants)
 - [x] Support tmap (vector only)
   - [ ] symbol size / alpha / line type constants
   - [ ] `tm_symbols()` on polygons (centroids)

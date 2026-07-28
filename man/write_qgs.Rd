@@ -32,8 +32,9 @@ write_qgs(plot, path, ...)
 )
 }
 \arguments{
-\item{plot}{A ggplot object whose layers are backed by sf data, one of
-the supported data.frame geoms (see \emph{Data frame layers}),
+\item{plot}{A ggplot object whose layers are backed by sf data (or
+SpatVector data, see \emph{SpatVector layers}), one of the supported
+data.frame geoms (see \emph{Data frame layers}),
 \code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}} or \code{\link[tidyterra:geom_spatraster_rgb]{tidyterra::geom_spatraster_rgb()}}
 (see \emph{SpatRaster layers}), or a tmap
 object with vector layers (see \emph{tmap plots}).}
@@ -122,9 +123,12 @@ Converts a ggplot2 plot whose layers are drawn from sf objects (or, for
 and \code{\link[ggplot2:geom_polygon]{ggplot2::geom_polygon()}}, from plain data frames, or from a
 SpatRaster via \code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}} or
 \code{\link[tidyterra:geom_spatraster_rgb]{tidyterra::geom_spatraster_rgb()}}) into a QGIS project
-(\code{.qgs}) file. The data of each layer is saved as a GeoPackage (a
-GeoTIFF for raster layers) under \verb{<path minus extension>_data/}, and
-the layer is styled after the plot's trained color scale:
+(\code{.qgs}) file. A SpatVector layer, drawn with
+\code{\link[tidyterra:geom_spatvector]{tidyterra::geom_spatvector()}} or with \code{geom_sf()} itself, counts as an
+sf layer (see \emph{SpatVector layers}). The data of each layer is saved as
+a GeoPackage (a GeoTIFF for raster layers) under
+\verb{<path minus extension>_data/}, and the layer is styled after the
+plot's trained color scale:
 }
 \details{
 \itemize{
@@ -246,6 +250,28 @@ point carrying the raster's CRS to \code{coord_sf()}). Such a layer draws
 nothing, so it is not written to the project: in general, an sf layer
 whose geometries are all empty is skipped and does not count for
 \code{layer_names}.
+}
+
+\section{SpatVector layers}{
+\code{\link[tidyterra:geom_spatvector]{tidyterra::geom_spatvector()}}, \code{\link[tidyterra:geom_spatvector_text]{tidyterra::geom_spatvector_text()}} and
+\code{\link[tidyterra:geom_spatvector_label]{tidyterra::geom_spatvector_label()}} are wrappers of
+\code{\link[ggplot2:geom_sf]{ggplot2::geom_sf()}}, \code{\link[ggplot2:geom_sf_text]{ggplot2::geom_sf_text()}} and
+\code{\link[ggplot2:geom_sf_label]{ggplot2::geom_sf_label()}}, and tidyterra registers a \code{fortify()} method
+that turns a \code{SpatVector} into an sf object when the plot or the layer is
+created. Such a layer is therefore an ordinary sf layer here, converted
+by all the rules above, and so is a plain \code{geom_sf()} layer given a
+\code{SpatVector} as its data. \code{terra::vect()} typically produces a geometry
+column mixing the single and \code{MULTI} variants of one type (e.g.
+\code{POLYGON} and \code{MULTIPOLYGON}), which is cast to the \code{MULTI} variant
+since a GeoPackage table holds a single geometry type.
+
+One consequence of the wrapping shows up in the derived layer names:
+ggplot2 records the \emph{wrapped} \code{geom_sf()} call as the layer's
+constructor, so the name comes from the variable the \code{SpatVector} is
+bound to rather than from the call. When there is no such variable (e.g.
+\code{geom_spatvector(data = terra::vect(path))}), the geom fallback names
+the layer \code{geom_sf}, not \code{geom_spatvector} — the wrapper's own name is
+not recorded anywhere in the layer. Pass \code{layer_names} for full control.
 }
 
 \section{tmap plots}{
