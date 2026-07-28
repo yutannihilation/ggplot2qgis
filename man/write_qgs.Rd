@@ -319,6 +319,13 @@ provider name is resolved via \code{\link[maptiles:get_providers]{maptiles::get_
 several basemaps only the first one is checked (visible) in the layer
 tree. Facets, \code{tm_text()} and the other scale types are errors.
 
+Map decorations are dropped: \code{\link[tmap:tm_graticules]{tmap::tm_graticules()}}/\code{\link[tmap:tm_grid]{tmap::tm_grid()}},
+and the components tmap draws around the map
+(\code{\link[tmap:tm_compass]{tmap::tm_compass()}}, \code{\link[tmap:tm_scalebar]{tmap::tm_scalebar()}}, \code{\link[tmap:tm_title]{tmap::tm_title()}},
+\code{\link[tmap:tm_credits]{tmap::tm_credits()}}, ...). They carry no data of their own, and QGIS
+offers its own equivalents. \code{\link[tmap:tm_tiles]{tmap::tm_tiles()}} is \emph{not} dropped but an
+error: it draws content that would silently go missing.
+
 A caveat on the bin edges: tmap's interval bins are left-closed
 (\verb{[a, b)}) while every QGIS classed renderer is right-closed
 (\verb{(a, b]}), so a feature or cell whose value falls exactly on an

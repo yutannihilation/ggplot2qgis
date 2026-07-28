@@ -888,21 +888,25 @@ test_that("map decorations are dropped, drawn aux layers are not", {
   dir <- local_out_dir()
 
   # A graticule and the components tmap draws around the map carry no
-  # data of their own, so they are simply skipped.
-  plain <- file.path(dir, "plain.qgs")
-  decorated <- file.path(dir, "decorated.qgs")
+  # data of their own, so they are simply skipped. Both projects use the
+  # same file name (in their own directory) so the data paths match.
+  plain <- file.path(dir, "plain", "proj.qgs")
+  decorated <- file.path(dir, "decorated", "proj.qgs")
+  dir.create(dirname(plain))
+  dir.create(dirname(decorated))
   write_qgs_quiet(base, plain)
   write_qgs_quiet(
     base + tmap::tm_graticules(labels.size = 0.7) + tmap::tm_compass() +
       tmap::tm_scalebar() + tmap::tm_title("A title"),
     decorated
   )
-  # Only the volatile bits (ids, save time) may differ.
+  # Only the volatile bits (the random layer ids and the save time) may
+  # differ.
   strip <- function(path) {
     out <- read_qgs(path)
-    out <- gsub("<id>[^<]*</id>", "", out)
-    out <- gsub('(layerid|id)="[^"]*"', "", out)
-    out <- gsub('\\{[0-9a-f-]{36}\\}', "", out)
+    uuid <- "[0-9a-f]{8}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{4}_[0-9a-f]{12}"
+    out <- gsub(uuid, "<uuid>", out)
+    out <- gsub("\\{[0-9a-f-]{36}\\}", "<uuid>", out)
     gsub('saveDateTime="[^"]*"', "", out)
   }
   expect_equal(strip(decorated), strip(plain))
