@@ -597,6 +597,153 @@ test_that("style_raster_pseudocolor() validates its inputs", {
     style_raster_pseudocolor(1L, 0, 1, stops_slice(stops, 1L)),
     "at least 2 color stops, got 1"
   )
+  expect_error(style_raster_pseudocolor(0L, 0, 1, stops), "1-based")
+  expect_error(
+    style_raster_pseudocolor(1L, 0, 1, stops, opacity = 2),
+    "must be a single number in \\[0, 1\\]"
+  )
+  expect_error(
+    style_raster_pseudocolor(1L, 0, 1, stops, nodata_color = c(1L, 2L, 3L)),
+    "c\\(r, g, b, alpha\\)"
+  )
+})
+
+test_that("a raster opacity and nodata color reach the renderer", {
+  stops <- list(
+    offsets = c(0, 1),
+    colors = cbind(c(0L, 0L, 0L), c(255L, 255L, 255L))
+  )
+  style <- style_raster_pseudocolor(
+    1L, 0, 1, stops,
+    opacity = 0.5,
+    nodata_color = c(255L, 0L, 0L, 255L)
+  )
+  w <- xml_writer(0L)
+  write_raster_renderer(w, style)
+  out <- xw_finish(w)
+
+  expect_match(out, 'opacity="0.5"', fixed = TRUE)
+  expect_match(out, 'nodataColor="255,0,0,255,rgb:1,0,0,1"', fixed = TRUE)
+
+  # No nodata color leaves the attribute empty (QGIS's transparent default).
+  w2 <- xml_writer(0L)
+  write_raster_renderer(w2, style_raster_pseudocolor(1L, 0, 1, stops))
+  expect_match(xw_finish(w2), 'nodataColor="" opacity="1"', fixed = TRUE)
+})
+
+test_that("a raster binned renderer writes a DISCRETE shader", {
+  colors <- cbind(c(255L, 255L, 204L), c(253L, 141L, 60L), c(128L, 0L, 38L))
+  style <- style_raster_binned(
+    1L,
+    boundaries = c(0, 3, 7, 15),
+    colors = colors,
+    labels = c("0 - 2", "3 - 6", "7 - 15")
+  )
+  w <- xml_writer(0L)
+  write_raster_renderer(w, style)
+  out <- xw_finish(w)
+
+  expect_match(out, 'type="singlebandpseudocolor"', fixed = TRUE)
+  expect_match(
+    out,
+    'classificationMode="1" clip="0" colorRampType="DISCRETE"',
+    fixed = TRUE
+  )
+  expect_match(out, 'classificationMin="0"', fixed = TRUE)
+  expect_match(out, 'classificationMax="15"', fixed = TRUE)
+  # Each <item> value is its class's inclusive upper bound; the last
+  # class is open-ended.
+  expect_match(
+    out,
+    '<item alpha="255" color="#ffffcc" label="0 - 2" value="3"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<item alpha="255" color="#fd8d3c" label="3 - 6" value="7"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<item alpha="255" color="#800026" label="7 - 15" value="inf"/>',
+    fixed = TRUE
+  )
+  # The informational ramp puts the interior bin color at its midpoint.
+  expect_match(
+    out,
+    'name="stops" type="QString" value="0.333333;',
+    fixed = TRUE
+  )
+})
+
+test_that("style_raster_binned() validates its inputs", {
+  colors <- cbind(c(0L, 0L, 0L), c(255L, 255L, 255L))
+  expect_error(
+    style_raster_binned(1L, c(0, 1, 2), colors, c("a", "b", "c")),
+    "one label per class \\(expected 2, got 3\\)"
+  )
+  expect_error(
+    style_raster_binned(1L, c(0, 2, 1), colors, c("a", "b")),
+    "strictly ascending"
+  )
+  expect_error(
+    style_raster_binned(1L, c(0, 1), colors, c("a", "b")),
+    "matching lengths"
+  )
+  expect_error(
+    style_raster_binned(1L, 0, matrix(integer(), nrow = 3), character()),
+    "at least 1 bin"
+  )
+})
+
+test_that("a raster paletted renderer writes one entry per value", {
+  style <- style_raster_paletted(
+    1L,
+    values = c(1, 2, 3),
+    colors = cbind(c(228L, 26L, 28L), c(55L, 126L, 184L), c(77L, 175L, 74L)),
+    labels = c("forest", "water", "urban")
+  )
+  w <- xml_writer(0L)
+  write_raster_renderer(w, style)
+  out <- xw_finish(w)
+
+  expect_match(out, 'type="paletted"', fixed = TRUE)
+  expect_match(out, 'band="1"', fixed = TRUE)
+  expect_match(
+    out,
+    '<paletteEntry alpha="255" color="#e41a1c" label="forest" value="1"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<paletteEntry alpha="255" color="#4daf4a" label="urban" value="3"/>',
+    fixed = TRUE
+  )
+  # A paletted renderer has no shader and no classification range.
+  expect_false(grepl("rastershader", out, fixed = TRUE))
+  expect_false(grepl("classificationMin", out, fixed = TRUE))
+})
+
+test_that("style_raster_paletted() validates its inputs", {
+  colors <- cbind(c(0L, 0L, 0L), c(255L, 255L, 255L))
+  expect_error(
+    style_raster_paletted(
+      1L, numeric(), matrix(integer(), nrow = 3), character()
+    ),
+    "at least 1 value"
+  )
+  expect_error(
+    style_raster_paletted(1L, c(1, 1), colors, c("a", "b")),
+    "must be unique"
+  )
+  expect_error(
+    style_raster_paletted(1L, c(1, NA), colors, c("a", "b")),
+    "non-missing numbers"
+  )
+  expect_error(
+    style_raster_paletted(1L, c(1, 2, 3), colors, c("a", "b")),
+    "matching lengths"
+  )
 })
 
 test_that("a multiband renderer writes one enhancement per channel", {

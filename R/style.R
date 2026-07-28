@@ -1,9 +1,10 @@
 # Symbology: vector styles and <renderer-v2> generation, plus raster
 # styles and <rasterrenderer> generation.
 #
-# Ported from src/style.rs of the generate-qgs crate (the DISCRETE
-# pseudocolor mode was not ported because write_qgs() has no path to it
-# yet — the Rust crate remains the reference if one is added).
+# Ported from src/style.rs of the generate-qgs crate; the DISCRETE
+# pseudocolor and paletted raster renderers have no counterpart there and
+# were derived from what QGIS 4.2.0 itself writes (see
+# .tmp/research/20260728_tmap_raster.md and docs/qgs-format.md).
 #
 # A vector style is a plain named list with a `type` field:
 #   - "none":        no fields; draws nothing (null-symbol renderer)
@@ -24,7 +25,12 @@
 #
 # A raster style is the same kind of list:
 #   - "raster_pseudocolor": band, min, max, stops
+#   - "raster_binned":      band, boundaries, colors, labels
+#   - "raster_paletted":    band, values, colors, labels
 #   - "raster_multiband":   red, green, blue, algorithm, opacity
+# The single-band ones also carry `opacity` and `nodata_color` (an
+# integer vector c(r, g, b, alpha), or NULL to leave the missing cells to
+# QGIS's transparent default).
 
 QGS_DEFAULT_OUTLINE_COLOR <- c(35L, 35L, 35L)
 QGS_DEFAULT_OUTLINE_WIDTH <- 0.26
@@ -237,13 +243,64 @@ style_set_stroke_target <- function(style, fill_color) {
   style
 }
 
+# Shared validation of the single-band raster styles: a 1-based band, a
+# layer opacity in 0..1, and an optional missing-cell color as an integer
+# vector c(r, g, b, alpha).
+validate_raster_band <- function(band) {
+  if (!is.numeric(band) || length(band) != 1L || is.na(band) ||
+    band < 1 || band %% 1 != 0) {
+    stop(
+      "band numbers are 1-based, got ",
+      if (is.null(band)) "NULL" else paste(band, collapse = ", "),
+      call. = FALSE
+    )
+  }
+  as.integer(band)
+}
+
+validate_raster_opacity <- function(opacity) {
+  if (!is.numeric(opacity) || length(opacity) != 1L || is.na(opacity) ||
+    opacity < 0 || opacity > 1) {
+    stop("`opacity` must be a single number in [0, 1]", call. = FALSE)
+  }
+  opacity
+}
+
+validate_nodata_color <- function(nodata_color) {
+  if (is.null(nodata_color)) {
+    return(NULL)
+  }
+  if (!is.numeric(nodata_color) || length(nodata_color) != 4L ||
+    anyNA(nodata_color) || any(nodata_color < 0 | nodata_color > 255)) {
+    stop(
+      "`nodata_color` must be an integer vector c(r, g, b, alpha) in 0..255",
+      call. = FALSE
+    )
+  }
+  as.integer(nodata_color)
+}
+
+# Validates the per-class labels of a classed raster style.
+validate_raster_labels <- function(labels, n) {
+  if (!is.character(labels) || length(labels) != n || anyNA(labels)) {
+    stop(
+      "a raster style needs one label per class (expected ", n, ", got ",
+      if (is.character(labels)) length(labels) else "a non-character vector",
+      ")",
+      call. = FALSE
+    )
+  }
+  labels
+}
+
 # Continuous pseudocoloring of one raster band (1-based): the cell value
 # is interpolated along `stops` between `min` and `max` (values outside
 # are clamped). Written as an INTERPOLATED <colorrampshader>, which —
 # unlike the vector renderers — reproduces the gradient exactly *and*
 # shows a continuous ramp in the legend, so there is no graduated vs.
 # continuous trade-off for rasters.
-style_raster_pseudocolor <- function(band, min, max, stops) {
+style_raster_pseudocolor <- function(band, min, max, stops, opacity = 1,
+                                     nodata_color = NULL) {
   if (min >= max) {
     stop(
       "invalid range: min (", num(min), ") must be smaller than max (",
@@ -254,10 +311,83 @@ style_raster_pseudocolor <- function(band, min, max, stops) {
   validate_color_stops(stops)
   list(
     type = "raster_pseudocolor",
-    band = as.integer(band),
+    band = validate_raster_band(band),
     min = min,
     max = max,
-    stops = stops
+    stops = stops,
+    opacity = validate_raster_opacity(opacity),
+    nodata_color = validate_nodata_color(nodata_color)
+  )
+}
+
+# Classed pseudocoloring of one raster band: `boundaries` are the n + 1
+# break values of n classes and `colors` a 3 x n matrix of class colors,
+# with `labels` the legend text of each class. Written as a DISCRETE
+# <colorrampshader>, whose <item> values are the class upper bounds (the
+# last one open-ended).
+#
+# Note the classes are right-closed in QGIS — a cell whose value is
+# exactly an interior boundary falls into the class *below* it. Scales
+# whose bins are left-closed (tmap's intervals) therefore differ from
+# their QGIS rendering on exact boundary values; see the tmap section of
+# ?write_qgs.
+style_raster_binned <- function(band, boundaries, colors, labels,
+                                opacity = 1, nodata_color = NULL) {
+  n <- length(boundaries) - 1L
+  if (n < 1L) {
+    stop("binned style needs at least 1 bin", call. = FALSE)
+  }
+  if (any(diff(boundaries) <= 0)) {
+    stop("bin boundaries must be strictly ascending", call. = FALSE)
+  }
+  if (n != ncol(colors)) {
+    stop(
+      "bin boundaries and colors must have matching lengths ",
+      "(n + 1 boundaries for n colors)",
+      call. = FALSE
+    )
+  }
+  list(
+    type = "raster_binned",
+    band = validate_raster_band(band),
+    boundaries = boundaries,
+    colors = colors,
+    labels = validate_raster_labels(labels, n),
+    opacity = validate_raster_opacity(opacity),
+    nodata_color = validate_nodata_color(nodata_color)
+  )
+}
+
+# Exact-value coloring of one raster band (QGIS's "paletted/unique
+# values" renderer): `values` are the cell values to match, `colors` a
+# 3 x n matrix and `labels` the legend text of each entry. Cells matching
+# no entry are not drawn.
+style_raster_paletted <- function(band, values, colors, labels,
+                                  opacity = 1, nodata_color = NULL) {
+  n <- length(values)
+  if (n < 1L) {
+    stop("paletted style needs at least 1 value", call. = FALSE)
+  }
+  if (!is.numeric(values) || anyNA(values)) {
+    stop("paletted style values must be non-missing numbers", call. = FALSE)
+  }
+  if (anyDuplicated(values) > 0L) {
+    stop("paletted style values must be unique", call. = FALSE)
+  }
+  if (n != ncol(colors)) {
+    stop(
+      "paletted style values and colors must have matching lengths",
+      call. = FALSE
+    )
+  }
+  list(
+    type = "raster_paletted",
+    band = validate_raster_band(band),
+    values = values,
+    colors = colors,
+    labels = validate_raster_labels(labels, n),
+    opacity = validate_raster_opacity(opacity),
+    nodata_color = validate_nodata_color(nodata_color)
   )
 }
 
@@ -278,15 +408,7 @@ style_raster_multiband <- function(red, green, blue,
     c("NoEnhancement", "StretchToMinimumMaximum")
   )
   for (channel in list(red, green, blue)) {
-    band <- channel$band
-    if (!is.numeric(band) || length(band) != 1L || is.na(band) ||
-      band < 1 || band %% 1 != 0) {
-      stop(
-        "band numbers are 1-based, got ",
-        if (is.null(band)) "NULL" else paste(band, collapse = ", "),
-        call. = FALSE
-      )
-    }
+    validate_raster_band(channel$band)
     for (field in c("min", "max")) {
       value <- channel[[field]]
       if (!is.numeric(value) || length(value) != 1L || !is.finite(value)) {
@@ -304,17 +426,13 @@ style_raster_multiband <- function(red, green, blue,
       )
     }
   }
-  if (!is.numeric(opacity) || length(opacity) != 1L || is.na(opacity) ||
-    opacity < 0 || opacity > 1) {
-    stop("`opacity` must be a single number in [0, 1]", call. = FALSE)
-  }
   list(
     type = "raster_multiband",
     red = red,
     green = green,
     blue = blue,
     algorithm = algorithm,
-    opacity = opacity
+    opacity = validate_raster_opacity(opacity)
   )
 }
 
@@ -322,7 +440,9 @@ style_raster_multiband <- function(red, green, blue,
 # <noDataList> entry per referenced band).
 raster_style_bands <- function(style) {
   switch(style$type,
-    raster_pseudocolor = style$band,
+    raster_pseudocolor = ,
+    raster_binned = ,
+    raster_paletted = style$band,
     raster_multiband = sort(unique(c(
       style$red$band, style$green$band, style$blue$band
     ))),
@@ -586,6 +706,25 @@ continuous_color_expression <- function(attribute, min, max, stops) {
 # colorramp: everything but the first and last stop).
 stops_slice <- function(stops, idx) {
   list(offsets = stops$offsets[idx], colors = stops$colors[, idx, drop = FALSE])
+}
+
+# The intermediate control points of a classed style's informational
+# colorramp (the one QGIS reuses when re-classifying): the interior bin
+# colors placed at their bin midpoints rescaled to 0..1. The first and
+# last bin colors are the ramp endpoints, so they are not repeated here;
+# NULL when there are no interior bins. Shared by the vector binned
+# renderer and the DISCRETE raster one.
+binned_colorramp_stops <- function(boundaries, colors) {
+  n <- ncol(colors)
+  if (n <= 2L) {
+    return(NULL)
+  }
+  interior <- seq(2L, n - 1L)
+  mids <- (boundaries[interior] + boundaries[interior + 1L]) / 2
+  list(
+    offsets = (mids - boundaries[1L]) / (boundaries[n + 1L] - boundaries[1L]),
+    colors = colors[, interior, drop = FALSE]
+  )
 }
 
 # Writes the <colorramp name="[source]" type="gradient"> element for the
@@ -856,20 +995,11 @@ write_binned_renderer <- function(w, geom, style) {
     style$linetype
   )
   xw_end(w) # source-symbol
-  # The colorramp is only informational (used when re-classifying):
-  # first/last bin colors as the endpoints, the interior bin colors as
-  # control points at their bin midpoints rescaled to 0..1.
-  mid_stops <- NULL
-  if (n > 2L) {
-    interior <- seq(2L, n - 1L)
-    mids <- (boundaries[interior] + boundaries[interior + 1L]) / 2
-    mid_stops <- list(
-      offsets = (mids - boundaries[1L]) / (boundaries[n + 1L] - boundaries[1L]),
-      colors = style$colors[, interior, drop = FALSE]
-    )
-  }
   write_gradient_colorramp(
-    w, style$colors[, 1L], style$colors[, n], mid_stops
+    w,
+    style$colors[, 1L],
+    style$colors[, n],
+    binned_colorramp_stops(boundaries, style$colors)
   )
   xw_start(w, "classificationMethod")
   xw_attr(w, "id", "Pretty")
@@ -985,9 +1115,21 @@ write_categorized_renderer <- function(w, geom, style) {
 write_raster_renderer <- function(w, style) {
   switch(style$type,
     raster_pseudocolor = write_pseudocolor_renderer(w, style),
+    raster_binned = write_discrete_pseudocolor_renderer(w, style),
+    raster_paletted = write_paletted_renderer(w, style),
     raster_multiband = write_multiband_renderer(w, style),
     stop("unknown raster style type: ", style$type)
   )
+}
+
+# The `nodataColor` attribute of a raster renderer: the color QGIS paints
+# the source's nodata cells in, as a QGIS color string. Empty (the
+# default) leaves them transparent.
+nodata_color_attr <- function(nodata_color) {
+  if (is.null(nodata_color)) {
+    return("")
+  }
+  qgis_color(nodata_color[1:3], nodata_color[[4L]])
 }
 
 # Multiband color, a.k.a. true color (samples/true-color.qgs of the
@@ -1037,8 +1179,8 @@ write_pseudocolor_renderer <- function(w, style) {
   xw_attr(w, "band", style$band)
   xw_attr(w, "classificationMax", num(style$max))
   xw_attr(w, "classificationMin", num(style$min))
-  xw_attr(w, "nodataColor", "")
-  xw_attr(w, "opacity", "1")
+  xw_attr(w, "nodataColor", nodata_color_attr(style$nodata_color))
+  xw_attr(w, "opacity", num(style$opacity))
   xw_attr(w, "type", "singlebandpseudocolor")
   xw_empty(w, "rasterTransparency")
   write_min_max_origin(w, "None")
@@ -1073,6 +1215,91 @@ write_pseudocolor_renderer <- function(w, style) {
   write_ramp_legend_settings(w)
   xw_end(w) # colorrampshader
   xw_end(w) # rastershader
+  xw_end(w) # rasterrenderer
+}
+
+# Classed single-band pseudocolor: the same element as the INTERPOLATED
+# writer above with colorRampType="DISCRETE", where each <item> `value`
+# is the *inclusive upper bound* of its class and the last one is
+# open-ended ("inf"). Verified against what QGIS 4.2.0 writes for a
+# QgsColorRampShader in Discrete mode.
+write_discrete_pseudocolor_renderer <- function(w, style) {
+  boundaries <- style$boundaries
+  n <- ncol(style$colors)
+  min <- boundaries[[1L]]
+  max <- boundaries[[n + 1L]]
+  xw_start(w, "rasterrenderer")
+  xw_attr(w, "alphaBand", "-1")
+  xw_attr(w, "band", style$band)
+  xw_attr(w, "classificationMax", num(max))
+  xw_attr(w, "classificationMin", num(min))
+  xw_attr(w, "nodataColor", nodata_color_attr(style$nodata_color))
+  xw_attr(w, "opacity", num(style$opacity))
+  xw_attr(w, "type", "singlebandpseudocolor")
+  xw_empty(w, "rasterTransparency")
+  write_min_max_origin(w, "None")
+  xw_start(w, "rastershader")
+  xw_start(w, "colorrampshader")
+  xw_attr(w, "classificationMode", "1")
+  xw_attr(w, "clip", "0")
+  xw_attr(w, "colorRampType", "DISCRETE")
+  xw_attr(w, "labelPrecision", "0")
+  xw_attr(w, "maximumValue", num(max))
+  xw_attr(w, "minimumValue", num(min))
+  write_gradient_colorramp(
+    w,
+    style$colors[, 1L],
+    style$colors[, n],
+    binned_colorramp_stops(boundaries, style$colors)
+  )
+  for (i in seq_len(n)) {
+    # The upper bound closes every class but the last, which catches
+    # everything above the final break.
+    value <- if (i == n) "inf" else num(boundaries[[i + 1L]])
+    xw_empty(
+      w,
+      "item",
+      c(
+        alpha = "255",
+        color = color_hex(style$colors[, i]),
+        label = style$labels[[i]],
+        value = value
+      )
+    )
+  }
+  write_ramp_legend_settings(w)
+  xw_end(w) # colorrampshader
+  xw_end(w) # rastershader
+  xw_end(w) # rasterrenderer
+}
+
+# Paletted, a.k.a. "unique values": one <paletteEntry> per exact cell
+# value. Cells matching no entry are not drawn. There is no
+# <rastershader> and no classificationMin/Max. Verified against what
+# QGIS 4.2.0 writes for a QgsPalettedRasterRenderer.
+write_paletted_renderer <- function(w, style) {
+  xw_start(w, "rasterrenderer")
+  xw_attr(w, "alphaBand", "-1")
+  xw_attr(w, "band", style$band)
+  xw_attr(w, "nodataColor", nodata_color_attr(style$nodata_color))
+  xw_attr(w, "opacity", num(style$opacity))
+  xw_attr(w, "type", "paletted")
+  xw_empty(w, "rasterTransparency")
+  write_min_max_origin(w, "None")
+  xw_start(w, "colorPalette")
+  for (i in seq_along(style$values)) {
+    xw_empty(
+      w,
+      "paletteEntry",
+      c(
+        alpha = "255",
+        color = color_hex(style$colors[, i]),
+        label = style$labels[[i]],
+        value = num(style$values[[i]])
+      )
+    )
+  }
+  xw_end(w) # colorPalette
   xw_end(w) # rasterrenderer
 }
 

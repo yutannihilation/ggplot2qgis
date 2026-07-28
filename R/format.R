@@ -21,14 +21,17 @@ fmt_channel <- function(v) {
   strip_zeros(sprintf("%.7f", f32))
 }
 
-# QGIS color serialization: "R,G,B,255,rgb:r,g,b,1", e.g.
+# QGIS color serialization: "R,G,B,A,rgb:r,g,b,a", e.g.
 # "232,113,141,255,rgb:0.9098039,0.4431373,0.5529412,1".
-# `rgb` is an integer vector c(r, g, b) in 0..255.
-qgis_color <- function(rgb) {
+# `rgb` is an integer vector c(r, g, b) in 0..255; `alpha` likewise, and
+# is only ever non-default for a raster renderer's nodataColor (symbol
+# colors carry their transparency in the symbol's own opacity).
+qgis_color <- function(rgb, alpha = 255L) {
   sprintf(
-    "%d,%d,%d,255,rgb:%s,%s,%s,1",
-    rgb[1L], rgb[2L], rgb[3L],
-    fmt_channel(rgb[1L]), fmt_channel(rgb[2L]), fmt_channel(rgb[3L])
+    "%d,%d,%d,%d,rgb:%s,%s,%s,%s",
+    rgb[1L], rgb[2L], rgb[3L], alpha,
+    fmt_channel(rgb[1L]), fmt_channel(rgb[2L]), fmt_channel(rgb[3L]),
+    fmt_channel(alpha)
   )
 }
 
