@@ -22,3 +22,5 @@
 
 # macOS
 .DS_Store
+
+/docs/adr
