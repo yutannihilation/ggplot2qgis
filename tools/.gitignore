@@ -1,0 +1,11 @@
+# Byte-compiled files, written next to the scripts as soon as one imports
+# another (qgis_env).
+__pycache__/
+*.py[cod]
+
+# Local interpreters and tool caches, should anyone set them up here.
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/

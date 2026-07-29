@@ -1,0 +1,8 @@
+#!/bin/sh
+# Runs an ad-hoc script under QGIS's own Python:
+#
+#   tools/qgis/qgis-python probe.py project.qgs
+#
+# The tools in this directory do not need it — they relaunch themselves
+# (see qgis_env.py) and can just be run directly.
+exec "$(dirname "$0")/qgis_env.py" "$@"

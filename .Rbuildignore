@@ -10,3 +10,4 @@
 ^pkgdown-site$
 ^\.tmp$
 ^\.DS_Store$
+^tools$
