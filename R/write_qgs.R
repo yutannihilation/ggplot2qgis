@@ -66,7 +66,8 @@ QGS_BASEMAPS <- list(
 #' and [ggplot2::geom_polygon()], from plain data frames, or from a
 #' SpatRaster via [tidyterra::geom_spatraster()],
 #' [tidyterra::geom_spatraster_rgb()],
-#' [tidyterra::geom_spatraster_contour()] or
+#' [tidyterra::geom_spatraster_contour()],
+#' [tidyterra::geom_spatraster_contour_text()] or
 #' [tidyterra::geom_spatraster_contour_filled()]) into a QGIS project
 #' (`.qgs`) file. A SpatVector layer, drawn with
 #' [tidyterra::geom_spatvector()] or with `geom_sf()` itself, counts as an
@@ -183,13 +184,22 @@ QGS_BASEMAPS <- list(
 #' untransformed columns, identity stat and position — so nudging is not
 #' supported).
 #'
-#' The carried-over styles are the text size, the font family, the text
-#' color and, for the label geoms, the background fill color
-#' (`geom_label()`'s `fill`; drawn as a plain rectangle, `fill = NA`
-#' disables it). Everything else (fontface, rounded corners, hjust/vjust,
-#' alpha, ...) keeps the QGIS labeling defaults, and the label placement
-#' is QGIS's: point labels are drawn over the point, line labels along
-#' the line, polygon labels around the centroid.
+#' The carried-over styles are the text size (in the layer's `size.unit`),
+#' the font family and the text color and, for the label geoms, the
+#' background fill color (`geom_label()`'s `fill`; drawn as a plain
+#' rectangle, `fill = NA` disables it). R's default sans-serif family
+#' (`""` or `"sans"`) is a device alias rather than a font name, so it
+#' leaves QGIS its own default font. Everything else (fontface, rounded
+#' corners, hjust/vjust, alpha, ...) keeps the QGIS labeling defaults, and
+#' the label placement is QGIS's: point labels are drawn over the point,
+#' line labels along and *on* the line (rather than QGIS's default of
+#' above it, since ggplot2 centers its text on the geometry), polygon
+#' labels around the centroid.
+#'
+#' A layer whose features are drawn under its own labels — that is
+#' `geom_spatraster_contour_text()`, see *SpatRaster layers* — masks
+#' them, so the text is not overdrawn by the line it labels. The
+#' labels-only layers of the text/label geoms have nothing to mask.
 #'
 #' # Data frame layers
 #'
@@ -262,6 +272,16 @@ QGS_BASEMAPS <- list(
 #' the plot's CRS before contouring, the layer's CRS is the plot's, not
 #' the raster's.
 #'
+#' [tidyterra::geom_spatraster_contour_text()] draws the same isolines with
+#' their value written along them, so it becomes that same LineString
+#' layer with QGIS labeling enabled (see *Text and labels*). The text is
+#' written as a `label` attribute — the `label` aesthetic (the contour
+#' value by default) run through the geom's `label_format`, so a custom
+#' format or a vector of labels is reproduced as it is; `label_format =
+#' NULL`, which tells the geom to place no labels, leaves the layer
+#' unlabeled. The labels mask the lines they are written into, which is
+#' how the gap ggplot2 breaks in each line under its label is reproduced.
+#'
 #' On a `geom_spatraster_contour()` layer, `colour` may be mapped to
 #' `after_stat(level)`, which becomes a renderer on the `level` attribute
 #' under the usual `gradient_style` rules. A
@@ -269,15 +289,18 @@ QGS_BASEMAPS <- list(
 #' stat maps it to `after_stat(level)`), which becomes a categorized
 #' renderer, one category per level of the fill scale. `level` is the only
 #' computed value written, so any other `colour`/`fill` expression is an
-#' error, as is a mapping the geom does not draw (`fill` on the lines,
-#' `colour` on the bands). The constant `colour`, `linewidth`, `linetype`
-#' and `alpha` are carried over like any other line or polygon layer's.
-#' A multi-band SpatRaster is not supported, and neither is
-#' `geom_spatraster_contour_text()`.
+#' error, as is a mapping the geom does not draw (`fill` on the lines and
+#' on the text, `colour` on the bands). On the text geom, `colour` colors
+#' the labels as well as the lines, and a QGIS labeling carries a single
+#' text color: the lines follow the scale and every label is drawn in the
+#' first feature's color, with a warning (silently when the layer has no
+#' labels to begin with). The constant `colour`, `linewidth`, `linetype`
+#' and `alpha` are carried over like any other line or polygon layer's. A
+#' multi-band SpatRaster is not supported.
 #'
-#' The layers are named `"<band>_contour"` and `"<band>_contour_filled"`
-#' by default, so overlaying the contours on the raster itself gives
-#' distinguishable layers.
+#' The layers are named `"<band>_contour"`, `"<band>_contour_text"` and
+#' `"<band>_contour_filled"` by default, so overlaying the contours on the
+#' raster itself gives distinguishable layers.
 #'
 #' `geom_spatraster()` appends an invisible helper layer (a single empty
 #' point carrying the raster's CRS to `coord_sf()`). Such a layer draws
@@ -428,7 +451,8 @@ QGS_BASEMAPS <- list(
 #'   SpatVector data, see *SpatVector layers*), one of the supported
 #'   data.frame geoms (see *Data frame layers*),
 #'   [tidyterra::geom_spatraster()], [tidyterra::geom_spatraster_rgb()],
-#'   [tidyterra::geom_spatraster_contour()] or
+#'   [tidyterra::geom_spatraster_contour()],
+#'   [tidyterra::geom_spatraster_contour_text()] or
 #'   [tidyterra::geom_spatraster_contour_filled()] (see *SpatRaster
 #'   layers*), or a tmap object (see *tmap plots* and *tmap raster
 #'   layers*).
@@ -604,10 +628,12 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
     is_rgb <- qgs_is_spatraster_rgb_layer(layer)
     is_raster <- is_rgb || qgs_is_spatraster_layer(layer)
     # NULL for anything but a contour layer, else which kind it is (see
-    # contour.R): the two differ in their geometry and in how their
-    # varying color is resolved.
+    # contour.R): they differ in their geometry and in how their varying
+    # color is resolved.
     contour <- if (qgs_is_spatraster_contour_layer(layer)) {
       "lines"
+    } else if (qgs_is_spatraster_contour_text_layer(layer)) {
+      "text"
     } else if (qgs_is_spatraster_contour_filled_layer(layer)) {
       "filled"
     }
@@ -645,6 +671,13 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
       # geom_spatraster_contour(): the isolines the stat computed become a
       # LineString layer (see contour.R).
       d <- qgs_contour_sf(built, layer, i)
+    } else if (identical(contour, "text")) {
+      # geom_spatraster_contour_text(): the same LineString layer, with
+      # the text drawn along the lines written as a `label` attribute and
+      # rendered by QGIS's labeling engine. Unlike the text geoms the
+      # features themselves are drawn too, so the layer keeps its style.
+      d <- qgs_contour_sf(built, layer, i, text = TRUE)
+      label <- qgs_contour_text_label_spec(built, layer, i, d)
     } else if (identical(contour, "filled")) {
       # geom_spatraster_contour_filled(): the bands the stat computed
       # become a Polygon layer (see contour.R).
@@ -758,6 +791,22 @@ qgs_layer_data <- function(plot, layer, i) {
   d
 }
 
+# A geom parameter of a built layer (`size.unit`, `label_format`, ...), or
+# `default` when the geom has no such parameter. Read by name rather than
+# with `%||%`, since a parameter is allowed to *be* NULL (which is how
+# geom_spatraster_contour_text() spells "place no labels").
+qgs_geom_param <- function(layer, name, default = NULL) {
+  params <- layer$computed_geom_params
+  if (!name %in% names(params)) {
+    # Not built yet (computed_geom_params is filled in by ggplot_build()).
+    params <- layer$geom_params
+  }
+  if (!name %in% names(params)) {
+    return(default)
+  }
+  params[[name]]
+}
+
 # A layer that would draw nothing and is skipped instead of written: an
 # sf layer whose geometries are all empty. geom_spatraster() appends such
 # a layer (a single empty point in the raster's CRS) just to carry the
@@ -858,6 +907,8 @@ qgs_tidyterra_layer_name <- function(layer, d) {
     as.character(band[[1L]])
   } else if (qgs_is_spatraster_contour_layer(layer)) {
     paste0(as.character(band[[1L]]), "_contour")
+  } else if (qgs_is_spatraster_contour_text_layer(layer)) {
+    paste0(as.character(band[[1L]]), "_contour_text")
   } else if (qgs_is_spatraster_contour_filled_layer(layer)) {
     paste0(as.character(band[[1L]]), "_contour_filled")
   }
@@ -1181,11 +1232,12 @@ qgs_style_attribute <- function(plot, layer, i, d) {
 # Resolves the aesthetics of a layer into the matching style. A contour
 # layer resolves its varying color differently (its data has no user
 # columns, see contour.R); everything after that is shared. `contour` is
-# NULL, "lines" or "filled".
+# NULL, "lines", "text" or "filled".
 qgs_vector_style <- function(plot, built, layer, i, d, gradient_style,
                              geometry, contour = NULL) {
   mapped <- switch(contour %||% "",
     lines = qgs_contour_style_attribute(plot, layer, i),
+    text = qgs_contour_text_style_attribute(plot, layer, i),
     filled = qgs_contour_filled_style_attribute(plot, layer, i),
     qgs_style_attribute(plot, layer, i, d)
   )

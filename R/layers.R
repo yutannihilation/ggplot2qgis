@@ -408,12 +408,15 @@ write_vector_maplayer <- function(w, layer) {
   xw_empty(w, "expressionfields")
   write_flags(w)
   write_renderer(w, layer$geometry, layer$style)
+  # The symbol layers the renderer just wrote, which a masking labeling
+  # references by id (see write_labeling()).
+  symbol_layers <- xw_symbol_layers(w)
   xw_start(w, "selection")
   xw_attr(w, "mode", "Default")
   xw_empty(w, "selectionColor", c(invalid = "1"))
   xw_end(w) # selection
   if (!is.null(layer$label)) {
-    write_labeling(w, layer$geometry, layer$label)
+    write_labeling(w, layer, symbol_layers)
   }
   xw_start(w, "customproperties")
   xw_empty(w, "Option")

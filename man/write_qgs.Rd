@@ -36,7 +36,8 @@ write_qgs(plot, path, ...)
 SpatVector data, see \emph{SpatVector layers}), one of the supported
 data.frame geoms (see \emph{Data frame layers}),
 \code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}}, \code{\link[tidyterra:geom_spatraster_rgb]{tidyterra::geom_spatraster_rgb()}},
-\code{\link[tidyterra:geom_spatraster_contour]{tidyterra::geom_spatraster_contour()}} or
+\code{\link[tidyterra:geom_spatraster_contour]{tidyterra::geom_spatraster_contour()}},
+\code{\link[tidyterra:geom_spatraster_contour_text]{tidyterra::geom_spatraster_contour_text()}} or
 \code{\link[tidyterra:geom_spatraster_contour_filled]{tidyterra::geom_spatraster_contour_filled()}} (see \emph{SpatRaster
 layers}), or a tmap object (see \emph{tmap plots} and \emph{tmap raster
 layers}).}
@@ -128,7 +129,8 @@ Converts a ggplot2 plot whose layers are drawn from sf objects (or, for
 and \code{\link[ggplot2:geom_polygon]{ggplot2::geom_polygon()}}, from plain data frames, or from a
 SpatRaster via \code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}},
 \code{\link[tidyterra:geom_spatraster_rgb]{tidyterra::geom_spatraster_rgb()}},
-\code{\link[tidyterra:geom_spatraster_contour]{tidyterra::geom_spatraster_contour()}} or
+\code{\link[tidyterra:geom_spatraster_contour]{tidyterra::geom_spatraster_contour()}},
+\code{\link[tidyterra:geom_spatraster_contour_text]{tidyterra::geom_spatraster_contour_text()}} or
 \code{\link[tidyterra:geom_spatraster_contour_filled]{tidyterra::geom_spatraster_contour_filled()}}) into a QGIS project
 (\code{.qgs}) file. A SpatVector layer, drawn with
 \code{\link[tidyterra:geom_spatvector]{tidyterra::geom_spatvector()}} or with \code{geom_sf()} itself, counts as an
@@ -246,13 +248,22 @@ rules (the plot must use \code{\link[ggplot2:coord_sf]{ggplot2::coord_sf()}}, \c
 untransformed columns, identity stat and position — so nudging is not
 supported).
 
-The carried-over styles are the text size, the font family, the text
-color and, for the label geoms, the background fill color
-(\code{geom_label()}'s \code{fill}; drawn as a plain rectangle, \code{fill = NA}
-disables it). Everything else (fontface, rounded corners, hjust/vjust,
-alpha, ...) keeps the QGIS labeling defaults, and the label placement
-is QGIS's: point labels are drawn over the point, line labels along
-the line, polygon labels around the centroid.
+The carried-over styles are the text size (in the layer's \code{size.unit}),
+the font family and the text color and, for the label geoms, the
+background fill color (\code{geom_label()}'s \code{fill}; drawn as a plain
+rectangle, \code{fill = NA} disables it). R's default sans-serif family
+(\code{""} or \code{"sans"}) is a device alias rather than a font name, so it
+leaves QGIS its own default font. Everything else (fontface, rounded
+corners, hjust/vjust, alpha, ...) keeps the QGIS labeling defaults, and
+the label placement is QGIS's: point labels are drawn over the point,
+line labels along and \emph{on} the line (rather than QGIS's default of
+above it, since ggplot2 centers its text on the geometry), polygon
+labels around the centroid.
+
+A layer whose features are drawn under its own labels — that is
+\code{geom_spatraster_contour_text()}, see \emph{SpatRaster layers} — masks
+them, so the text is not overdrawn by the line it labels. The
+labels-only layers of the text/label geoms have nothing to mask.
 }
 
 \section{Data frame layers}{
@@ -325,6 +336,15 @@ reproduced as they are — and, since the stat reprojects the raster to
 the plot's CRS before contouring, the layer's CRS is the plot's, not
 the raster's.
 
+\code{\link[tidyterra:geom_spatraster_contour_text]{tidyterra::geom_spatraster_contour_text()}} draws the same isolines with
+their value written along them, so it becomes that same LineString
+layer with QGIS labeling enabled (see \emph{Text and labels}). The text is
+written as a \code{label} attribute — the \code{label} aesthetic (the contour
+value by default) run through the geom's \code{label_format}, so a custom
+format or a vector of labels is reproduced as it is; \code{label_format = NULL}, which tells the geom to place no labels, leaves the layer
+unlabeled. The labels mask the lines they are written into, which is
+how the gap ggplot2 breaks in each line under its label is reproduced.
+
 On a \code{geom_spatraster_contour()} layer, \code{colour} may be mapped to
 \code{after_stat(level)}, which becomes a renderer on the \code{level} attribute
 under the usual \code{gradient_style} rules. A
@@ -332,15 +352,18 @@ under the usual \code{gradient_style} rules. A
 stat maps it to \code{after_stat(level)}), which becomes a categorized
 renderer, one category per level of the fill scale. \code{level} is the only
 computed value written, so any other \code{colour}/\code{fill} expression is an
-error, as is a mapping the geom does not draw (\code{fill} on the lines,
-\code{colour} on the bands). The constant \code{colour}, \code{linewidth}, \code{linetype}
-and \code{alpha} are carried over like any other line or polygon layer's.
-A multi-band SpatRaster is not supported, and neither is
-\code{geom_spatraster_contour_text()}.
+error, as is a mapping the geom does not draw (\code{fill} on the lines and
+on the text, \code{colour} on the bands). On the text geom, \code{colour} colors
+the labels as well as the lines, and a QGIS labeling carries a single
+text color: the lines follow the scale and every label is drawn in the
+first feature's color, with a warning (silently when the layer has no
+labels to begin with). The constant \code{colour}, \code{linewidth}, \code{linetype}
+and \code{alpha} are carried over like any other line or polygon layer's. A
+multi-band SpatRaster is not supported.
 
-The layers are named \code{"<band>_contour"} and \code{"<band>_contour_filled"}
-by default, so overlaying the contours on the raster itself gives
-distinguishable layers.
+The layers are named \code{"<band>_contour"}, \code{"<band>_contour_text"} and
+\code{"<band>_contour_filled"} by default, so overlaying the contours on the
+raster itself gives distinguishable layers.
 
 \code{geom_spatraster()} appends an invisible helper layer (a single empty
 point carrying the raster's CRS to \code{coord_sf()}). Such a layer draws

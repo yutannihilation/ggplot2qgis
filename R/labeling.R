@@ -1,6 +1,8 @@
 # Text/label layers: geom_sf_text / geom_sf_label / geom_text / geom_label
 # converted to a labels-only QGIS layer (a null-symbol renderer plus a
-# <labeling type="simple"> element).
+# <labeling type="simple"> element). A
+# tidyterra::geom_spatraster_contour_text() layer reuses the labeling
+# without the null symbol — it draws its isolines too, see contour.R.
 #
 # The expected XML was pinned down against samples/nc_text.qgs and
 # samples/nc_label.qgs (QGIS 4.2-saved projects with labels enabled): the
@@ -10,9 +12,18 @@
 # geoms) the background fill. Everything else (font style, buffer,
 # shadow, rounded corners, ...) keeps the QGIS defaults.
 
-# Points per ggplot2 size unit: the text size is in millimeters and QGIS
-# wants points (ggplot2's .pt, 72.27 pt per inch / 25.4 mm per inch).
+# Points per unit of the `size` aesthetic, per `size.unit` argument of the
+# text geoms (ggplot2's resolve_text_unit()). QGIS wants points; the
+# default unit is millimeters, i.e. ggplot2's .pt (72.27 pt per inch /
+# 25.4 mm per inch).
 QGS_PT_PER_MM <- 72.27 / 25.4
+QGS_PT_PER_SIZE_UNIT <- c(
+  mm = QGS_PT_PER_MM,
+  pt = 1,
+  cm = QGS_PT_PER_MM * 10,
+  "in" = 72.27,
+  pc = 12
+)
 
 QGS_TEXT_GEOMS <- c("GeomText", "GeomLabel")
 
@@ -33,6 +44,9 @@ qgs_is_text_layer <- function(layer) {
 #   - family — font family, or NULL for the QGIS default font.
 #   - background — background fill as c(r, g, b) (geom_label's `fill`),
 #     or NULL for no background (text geoms, or fill = NA).
+#   - mask — whether the labels erase what the layer draws beneath them
+#     (see write_label_mask()). FALSE here: a text/label layer draws no
+#     features of its own.
 qgs_label_spec <- function(plot, built, layer, i, d) {
   quo <- layer$mapping[["label"]] %||% plot@mapping[["label"]]
   if (is.null(quo)) {
@@ -56,16 +70,7 @@ qgs_label_spec <- function(plot, built, layer, i, d) {
     )
   }
 
-  # The constant styles ggplot2 computed for the layer, from its first
-  # feature (like qgs_layer_constants(); only meaningful when they are
-  # not mapped).
   computed <- built@data[[i]]
-  first_or <- function(name, default) {
-    v <- computed[[name]]
-    if (length(v) == 0L || is.na(v[[1L]])) default else v[[1L]]
-  }
-
-  family <- as.character(first_or("family", ""))
   # Only geom_label has a background; its fill = NA means "no background",
   # which qgs_rgb() maps to NULL.
   background <- if (class(layer$geom)[[1L]] == "GeomLabel") {
@@ -73,14 +78,51 @@ qgs_label_spec <- function(plot, built, layer, i, d) {
     qgs_rgb(if (length(fill) == 0L) "white" else fill[[1L]])
   }
 
-  list(
-    field = field,
-    # Rounded so binary float noise stays out of the project file.
-    size = round(first_or("size", 3.88) * QGS_PT_PER_MM, 7),
-    color = qgs_rgb(first_or("colour", "black")),
-    family = if (nzchar(family)) family,
-    background = background
+  c(
+    list(field = field),
+    qgs_label_text_styles(computed, qgs_text_size_unit(layer, i)),
+    list(background = background, mask = FALSE)
   )
+}
+
+# The `size`/`colour`/`family` part of a label spec: the constant text
+# styles ggplot2 computed for the layer, from its first feature (like
+# qgs_layer_constants(); only meaningful when they are not mapped).
+# `size_unit` is the points-per-`size` factor of qgs_text_size_unit().
+qgs_label_text_styles <- function(computed, size_unit) {
+  first_or <- function(name, default) {
+    v <- computed[[name]]
+    if (length(v) == 0L || is.na(v[[1L]])) default else v[[1L]]
+  }
+
+  list(
+    # Rounded so binary float noise stays out of the project file.
+    size = round(first_or("size", 3.88) * size_unit, 7),
+    color = qgs_rgb(first_or("colour", "black")),
+    family = qgs_label_family(as.character(first_or("family", "")))
+  )
+}
+
+# The font family QGIS is given, or NULL for its default font. R's default
+# sans-serif family is a device-independent alias rather than the name of
+# a font, so it means the same thing as an unset family (the geoms differ
+# in how they spell it: `family = ""` for the text geoms, `"sans"` for
+# geom_spatraster_contour_text()).
+qgs_label_family <- function(family) {
+  if (nzchar(family) && family != "sans") family
+}
+
+# Points per unit of the layer's `size` aesthetic. The text geoms take the
+# unit `size` is in as a `size.unit` argument, so a layer that names
+# anything but the default "mm" would otherwise get a font size off by
+# that factor.
+qgs_text_size_unit <- function(layer, i) {
+  unit <- as.character(qgs_geom_param(layer, "size.unit", "mm"))
+  factor <- unname(QGS_PT_PER_SIZE_UNIT[unit])
+  if (length(factor) != 1L || is.na(factor)) {
+    stop("layer ", i, ": unsupported `size.unit`: ", unit, call. = FALSE)
+  }
+  factor
 }
 
 # Rejects a position adjustment on a text/label layer: QGIS places the
@@ -136,14 +178,21 @@ qgs_text_df_sf <- function(plot, built, layer, i, d) {
 }
 
 # Writes the <labeling type="simple"> element of a vector maplayer.
-# `label` is a qgs_label_spec() result; `geom` drives the placement (see
-# write_label_placement()).
-write_labeling <- function(w, geom, label) {
+# `layer` carries the qgs_label_spec() result in `$label` and the geometry
+# that drives the placement (see write_label_placement());
+# `symbol_layers` are the ids of the symbol layers the layer's renderer
+# wrote, which a masking label erases (see write_label_mask()).
+write_labeling <- function(w, layer, symbol_layers = character()) {
+  label <- layer$label
+  geom <- layer$geometry
+  masked <- if (isTRUE(label$mask)) {
+    symbol_layer_references(layer$id, symbol_layers)
+  }
   xw_start(w, "labeling")
   xw_attr(w, "type", "simple")
   xw_start(w, "settings")
   xw_attr(w, "calloutType", "simple")
-  write_label_text_style(w, label)
+  write_label_text_style(w, label, masked)
   xw_empty(
     w,
     "text-format",
@@ -192,7 +241,7 @@ write_labeling <- function(w, geom, label) {
   xw_end(w) # labeling
 }
 
-write_label_text_style <- function(w, label) {
+write_label_text_style <- function(w, label, masked = NULL) {
   scale <- "3x:0,0,0,0,0,0"
   xw_start(w, "text-style")
   xw_attr(w, "allowHtml", "0")
@@ -246,21 +295,7 @@ write_label_text_style <- function(w, label) {
       bufferSizeUnits = "MM"
     )
   )
-  xw_empty(
-    w,
-    "text-mask",
-    c(
-      maskEnabled = "0",
-      maskJoinStyle = "128",
-      maskOpacity = "1",
-      maskSize = "1.5",
-      maskSize2 = "1.5",
-      maskSizeMapUnitScale = scale,
-      maskSizeUnits = "MM",
-      maskType = "0",
-      maskedSymbolLayers = ""
-    )
-  )
+  write_label_mask(w, masked, scale)
   write_label_background(w, label$background)
   xw_empty(
     w,
@@ -286,6 +321,47 @@ write_label_text_style <- function(w, label) {
   write_data_defined_properties(w, "dd_properties")
   xw_empty(w, "substitutions")
   xw_end(w) # text-style
+}
+
+# The label mask: the symbol layers in `masked` are erased where the
+# label sits, so the text stays readable over what the layer itself draws.
+# Disabled (the QGIS default) when `masked` is NULL, which is every layer
+# whose features are not drawn to begin with — a labels-only text/label
+# layer has nothing to mask. The size and join style keep the QGIS
+# defaults (a 1.5 mm halo).
+write_label_mask <- function(w, masked, scale) {
+  xw_empty(
+    w,
+    "text-mask",
+    c(
+      maskEnabled = if (is.null(masked)) "0" else "1",
+      maskJoinStyle = "128",
+      maskOpacity = "1",
+      maskSize = "1.5",
+      maskSize2 = "1.5",
+      maskSizeMapUnitScale = scale,
+      maskSizeUnits = "MM",
+      maskType = "0",
+      maskedSymbolLayers = masked %||% ""
+    )
+  )
+}
+
+# A QGIS symbol layer reference list: `<layer id>;<symbol layer id>`
+# pairs, flattened into one semicolon-separated string (QGIS >= 3.30's
+# format — the ids never contain a semicolon, so the pairs are recovered
+# by position).
+symbol_layer_references <- function(layer_id, symbol_layers) {
+  if (length(symbol_layers) == 0L) {
+    # Only reachable if a masking label ends up on a layer whose renderer
+    # draws nothing, which no style produces; writing the layer id alone
+    # would be a malformed reference.
+    stop(
+      "a masking label needs at least one symbol layer to mask",
+      call. = FALSE
+    )
+  }
+  paste0(rbind(layer_id, symbol_layers, deparse.level = 0L), collapse = ";")
 }
 
 # The label background: a plain rectangle (shapeType 0) in `background`,
@@ -414,6 +490,12 @@ write_label_background_symbol <- function(w, name, type, class, options) {
 # centered text), line labels along the line (2) and polygon labels
 # around the centroid (0, what QGIS writes when labels are enabled on a
 # polygon layer).
+#
+# A line label is placed *on* the line (placementFlags 1 | 8 = OnLine |
+# MapOrientation) rather than QGIS's default above it (2 | 8): ggplot2
+# never offsets its text off the geometry — geom_sf_text() centers it on
+# the point-on-surface, and geom_spatraster_contour_text() writes the
+# contour value into the line itself.
 write_label_placement <- function(w, geom) {
   scale <- "3x:0,0,0,0,0,0"
   xw_empty(
@@ -454,7 +536,7 @@ write_label_placement <- function(w, geom) {
       overrunDistanceMapUnitScale = scale,
       overrunDistanceUnit = "MM",
       placement = switch(geom, Point = "1", LineString = "2", Polygon = "0"),
-      placementFlags = "10",
+      placementFlags = if (geom == "LineString") "9" else "10",
       polygonPlacementFlags = "2",
       predefinedPositionOrder = "TR,TL,BR,BL,R,L,TSR,BSR",
       preserveRotation = "1",

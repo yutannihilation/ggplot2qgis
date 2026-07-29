@@ -689,8 +689,13 @@ color_property_name <- function(geom, target) {
 # `outline_color` are the resolved colors of this symbol, everything else
 # (width, linetype, marker, alphas, target) comes from `style`. The symbol
 # layer's targeted color can carry a data-defined expression override.
+#
+# `rendered` says whether this symbol is one the layer actually draws (a
+# `<symbols>` entry) rather than a `<source-symbol>` template; only the
+# former can be masked by a label, so only its id is recorded (see
+# xw_record_symbol_layer()).
 write_symbol <- function(w, name, geom, style, color, outline_color,
-                         color_expression = NULL) {
+                         color_expression = NULL, rendered = TRUE) {
   target <- style$target %||% "fill"
   class <- switch(geom,
     Point = "SimpleMarker",
@@ -707,10 +712,14 @@ write_symbol <- function(w, name, geom, style, color, outline_color,
   xw_attr(w, "name", name)
   xw_attr(w, "type", symbol_type(geom))
   write_data_defined_properties(w, "data_defined_properties")
+  id <- paste0("{", qgs_uuid(), "}")
+  if (rendered) {
+    xw_record_symbol_layer(w, id)
+  }
   xw_start(w, "layer")
   xw_attr(w, "class", class)
   xw_attr(w, "enabled", "1")
-  xw_attr(w, "id", paste0("{", qgs_uuid(), "}"))
+  xw_attr(w, "id", id)
   xw_attr(w, "locked", "0")
   xw_attr(w, "pass", "0")
   xw_start(w, "Option")
@@ -974,7 +983,8 @@ write_graduated_renderer <- function(w, geom, style) {
     style$outline_color
   )
   write_symbol(
-    w, "0", geom, style, colors$color, colors$outline
+    w, "0", geom, style, colors$color, colors$outline,
+    rendered = FALSE
   )
   xw_end(w) # source-symbol
   n_stops <- length(style$stops$offsets)
@@ -1060,7 +1070,8 @@ write_binned_renderer <- function(w, geom, style) {
     style$outline_color
   )
   write_symbol(
-    w, "0", geom, style, colors$color, colors$outline
+    w, "0", geom, style, colors$color, colors$outline,
+    rendered = FALSE
   )
   xw_end(w) # source-symbol
   write_gradient_colorramp(
@@ -1159,7 +1170,8 @@ write_categorized_renderer <- function(w, geom, style) {
     style$outline_color
   )
   write_symbol(
-    w, "0", geom, style, colors$color, colors$outline
+    w, "0", geom, style, colors$color, colors$outline,
+    rendered = FALSE
   )
   xw_end(w) # source-symbol
   # The colorramp is only informational for a categorized renderer (used
