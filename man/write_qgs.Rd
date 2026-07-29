@@ -35,9 +35,9 @@ write_qgs(plot, path, ...)
 \item{plot}{A ggplot object whose layers are backed by sf data (or
 SpatVector data, see \emph{SpatVector layers}), one of the supported
 data.frame geoms (see \emph{Data frame layers}),
-\code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}} or \code{\link[tidyterra:geom_spatraster_rgb]{tidyterra::geom_spatraster_rgb()}}
-(see \emph{SpatRaster layers}), or a tmap object (see \emph{tmap plots} and
-\emph{tmap raster layers}).}
+\code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}}, \code{\link[tidyterra:geom_spatraster_rgb]{tidyterra::geom_spatraster_rgb()}} or
+\code{\link[tidyterra:geom_spatraster_contour]{tidyterra::geom_spatraster_contour()}} (see \emph{SpatRaster layers}), or a
+tmap object (see \emph{tmap plots} and \emph{tmap raster layers}).}
 
 \item{path}{Path of the \code{.qgs} file to write. Tilde paths (e.g. \verb{~/x.qgs})
 are expanded.}
@@ -124,8 +124,9 @@ missing cells exactly and ignore this (see \emph{tmap raster layers}).}
 Converts a ggplot2 plot whose layers are drawn from sf objects (or, for
 \code{\link[ggplot2:geom_point]{ggplot2::geom_point()}}, \code{\link[ggplot2:geom_path]{ggplot2::geom_path()}}, \code{\link[ggplot2:geom_line]{ggplot2::geom_line()}}
 and \code{\link[ggplot2:geom_polygon]{ggplot2::geom_polygon()}}, from plain data frames, or from a
-SpatRaster via \code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}} or
-\code{\link[tidyterra:geom_spatraster_rgb]{tidyterra::geom_spatraster_rgb()}}) into a QGIS project
+SpatRaster via \code{\link[tidyterra:geom_spatraster]{tidyterra::geom_spatraster()}},
+\code{\link[tidyterra:geom_spatraster_rgb]{tidyterra::geom_spatraster_rgb()}} or
+\code{\link[tidyterra:geom_spatraster_contour]{tidyterra::geom_spatraster_contour()}}) into a QGIS project
 (\code{.qgs}) file. A SpatVector layer, drawn with
 \code{\link[tidyterra:geom_spatvector]{tidyterra::geom_spatvector()}} or with \code{geom_sf()} itself, counts as an
 sf layer (see \emph{SpatVector layers}). The data of each layer is saved as
@@ -304,9 +305,31 @@ and the original is not recoverable from the plot object — so the
 GeoTIFF stays small, but is not the full-resolution source. For
 \code{geom_spatraster()}, only a single-band SpatRaster with a continuous
 (not binned) \code{fill} scale and the default \code{fill} mapping (the band
-value) is supported for now;
-\code{\link[tidyterra:geom_spatraster_contour]{tidyterra::geom_spatraster_contour()}} and tidyterra's color tables
+value) is supported for now; tidyterra's color tables
 (\code{scale_fill_coltab()}) are not.
+
+A \code{\link[tidyterra:geom_spatraster_contour]{tidyterra::geom_spatraster_contour()}} layer is the exception among
+the SpatRaster geoms: it draws lines, so it becomes an ordinary
+GeoPackage-backed LineString layer with one feature per contour line
+(per level and per piece). The contour value is kept as a \code{level}
+attribute and the band name as \code{lyr}. The lines are the ones the
+layer's stat computed, so the geom's \code{breaks}/\code{bins}/\code{binwidth} are
+reproduced as they are — and, since the stat reprojects the raster to
+the plot's CRS before contouring, the layer's CRS is the plot's, not
+the raster's.
+
+\code{colour} may be mapped to \code{after_stat(level)}, which becomes a
+renderer on the \code{level} attribute under the usual \code{gradient_style}
+rules; the contour data has no columns of its own, so any other
+\code{colour} expression — and any \code{fill} mapping, which a line geom does
+not draw — is an error. The constant \code{colour}, \code{linewidth},
+\code{linetype} and \code{alpha} are carried over like any other line layer's.
+A multi-band SpatRaster is not supported, and neither are
+\code{\link[tidyterra:geom_spatraster_contour_filled]{tidyterra::geom_spatraster_contour_filled()}} and
+\code{geom_spatraster_contour_text()}.
+
+The layer is named \code{"<band>_contour"} by default, so overlaying the
+contour lines on the raster itself gives two distinguishable layers.
 
 \code{geom_spatraster()} appends an invisible helper layer (a single empty
 point carrying the raster's CRS to \code{coord_sf()}). Such a layer draws

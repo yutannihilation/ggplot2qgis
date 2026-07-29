@@ -23,10 +23,14 @@
 # stat-time reprojection to the plot CRS and `mask_projection` are
 # draw-time effects and are not captured, as for geom_spatraster().)
 #
+# geom_spatraster_contour() is *not* here: it draws lines, so it becomes
+# a vector layer (see contour.R).
+#
 # TODO (advanced raster support, out of scope for now):
 # - multi-band SpatRasters in geom_spatraster() (tidyterra facets by
 #   band)
-# - geom_spatraster_contour() (could be materialized as a vector source)
+# - geom_spatraster_contour_filled() (bands of polygons) and
+#   geom_spatraster_contour_text() (contour labels)
 # - binned fill scales (the DISCRETE colorrampshader mode), color tables
 #   (tidyterra's scale_fill_coltab()) and the scale's na.value color
 #   (missing cells currently render transparent via the source nodata)
