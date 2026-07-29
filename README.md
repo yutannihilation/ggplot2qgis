@@ -169,6 +169,22 @@ write_qgs(p, "volcano.qgs")
 the layer's `r`/`g`/`b` band selection, its `zlim`/`stretch` rescaling and
 its constant `alpha` carried over.
 
+`geom_spatraster_contour()` is the exception: it draws lines, so it becomes a
+GeoPackage-backed line layer with one feature per contour line, keeping the
+contour value as a `level` attribute. Mapping `colour` to
+`after_stat(level)` renders it through the same scale machinery as a vector
+layer:
+
+``` r
+p <- ggplot() +
+  geom_spatraster(data = volcano2) +
+  geom_spatraster_contour(data = volcano2, aes(colour = after_stat(level)))
+
+write_qgs(p, "volcano_contour.qgs")
+```
+
+The raster becomes `elevation` and the lines `elevation_contour`.
+
 ### tmap
 
 `tm_raster()` on a raster shape (a stars object, a `SpatRaster` or a
@@ -206,7 +222,9 @@ write_qgs(x, "land.qgs")
     `alpha` aesthetic and tmap's `fill_alpha`/`col_alpha` are carried over
 - Raster
   - [ ] `geom_spatraster()` on a multi-layer SpatRaster (tidyterra facets
-    by band, so one layer per band)
-  - [ ] `geom_spatraster_contour()`, and tidyterra's color tables
-    (`scale_fill_coltab()`)
+    by band, so one layer per band); `geom_spatraster_contour()` on one too
+    (it does not facet, so all bands' lines would share a layer)
+  - [ ] `geom_spatraster_contour_filled()` (bands of polygons) and
+    `geom_spatraster_contour_text()` (contour labels)
+  - [ ] tidyterra's color tables (`scale_fill_coltab()`)
   - [ ] tmap's `tm_rgb()` / `tm_rgba()`
