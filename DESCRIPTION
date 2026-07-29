@@ -16,6 +16,7 @@ Roxygen: list(markdown = TRUE)
 Imports:
     ggplot2 (>= 4.0.0),
     grDevices,
+    isoband,
     rlang,
     sf (>= 1.0.0),
     tools

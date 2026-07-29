@@ -185,6 +185,22 @@ write_qgs(p, "volcano_contour.qgs")
 
 The raster becomes `elevation` and the lines `elevation_contour`.
 
+`geom_spatraster_contour_filled()` becomes a polygon layer instead: one
+feature per contour band, with the holes punched by the bands above it kept as
+holes. Its `fill` is always the band the stat computed, so the layer gets a
+categorized renderer keyed on the band label (`"(70, 80]"` and so on):
+
+``` r
+p <- ggplot() +
+  geom_spatraster_contour_filled(data = volcano2) +
+  geom_spatraster_contour(data = volcano2)
+
+write_qgs(p, "volcano_bands.qgs")
+```
+
+The bands become `elevation_contour_filled` and the lines on top of them
+`elevation_contour`.
+
 ### tmap
 
 `tm_raster()` on a raster shape (a stars object, a `SpatRaster` or a
@@ -222,9 +238,8 @@ write_qgs(x, "land.qgs")
     `alpha` aesthetic and tmap's `fill_alpha`/`col_alpha` are carried over
 - Raster
   - [ ] `geom_spatraster()` on a multi-layer SpatRaster (tidyterra facets
-    by band, so one layer per band); `geom_spatraster_contour()` on one too
-    (it does not facet, so all bands' lines would share a layer)
-  - [ ] `geom_spatraster_contour_filled()` (bands of polygons) and
-    `geom_spatraster_contour_text()` (contour labels)
+    by band, so one layer per band); the contour geoms on one too (they do
+    not facet, so all bands' shapes would share a layer)
+  - [ ] `geom_spatraster_contour_text()` (contour labels)
   - [ ] tidyterra's color tables (`scale_fill_coltab()`)
   - [ ] tmap's `tm_rgb()` / `tm_rgba()`

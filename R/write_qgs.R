@@ -65,8 +65,9 @@ QGS_BASEMAPS <- list(
 #' [ggplot2::geom_point()], [ggplot2::geom_path()], [ggplot2::geom_line()]
 #' and [ggplot2::geom_polygon()], from plain data frames, or from a
 #' SpatRaster via [tidyterra::geom_spatraster()],
-#' [tidyterra::geom_spatraster_rgb()] or
-#' [tidyterra::geom_spatraster_contour()]) into a QGIS project
+#' [tidyterra::geom_spatraster_rgb()],
+#' [tidyterra::geom_spatraster_contour()] or
+#' [tidyterra::geom_spatraster_contour_filled()]) into a QGIS project
 #' (`.qgs`) file. A SpatVector layer, drawn with
 #' [tidyterra::geom_spatvector()] or with `geom_sf()` itself, counts as an
 #' sf layer (see *SpatVector layers*). The data of each layer is saved as
@@ -247,28 +248,36 @@ QGS_BASEMAPS <- list(
 #' value) is supported for now; tidyterra's color tables
 #' (`scale_fill_coltab()`) are not.
 #'
-#' A [tidyterra::geom_spatraster_contour()] layer is the exception among
-#' the SpatRaster geoms: it draws lines, so it becomes an ordinary
-#' GeoPackage-backed LineString layer with one feature per contour line
-#' (per level and per piece). The contour value is kept as a `level`
-#' attribute and the band name as `lyr`. The lines are the ones the
-#' layer's stat computed, so the geom's `breaks`/`bins`/`binwidth` are
+#' The contour geoms are the exception among the SpatRaster geoms: they
+#' draw vector shapes, so they become ordinary GeoPackage-backed layers.
+#' [tidyterra::geom_spatraster_contour()] becomes a LineString layer with
+#' one feature per contour line (per level and per piece), and
+#' [tidyterra::geom_spatraster_contour_filled()] a Polygon layer with one
+#' MULTIPOLYGON feature per band, the holes punched by the bands above it
+#' kept as holes. Both keep the band name as a `lyr` attribute and the
+#' contour value as a `level` one — a number for the lines, the band's
+#' label (e.g. `"(70, 80]"`) for the filled bands. The shapes are the ones
+#' the layer's stat computed, so the geom's `breaks`/`bins`/`binwidth` are
 #' reproduced as they are — and, since the stat reprojects the raster to
 #' the plot's CRS before contouring, the layer's CRS is the plot's, not
 #' the raster's.
 #'
-#' `colour` may be mapped to `after_stat(level)`, which becomes a
-#' renderer on the `level` attribute under the usual `gradient_style`
-#' rules; the contour data has no columns of its own, so any other
-#' `colour` expression — and any `fill` mapping, which a line geom does
-#' not draw — is an error. The constant `colour`, `linewidth`,
-#' `linetype` and `alpha` are carried over like any other line layer's.
-#' A multi-band SpatRaster is not supported, and neither are
-#' [tidyterra::geom_spatraster_contour_filled()] and
+#' On a `geom_spatraster_contour()` layer, `colour` may be mapped to
+#' `after_stat(level)`, which becomes a renderer on the `level` attribute
+#' under the usual `gradient_style` rules. A
+#' `geom_spatraster_contour_filled()` layer always varies its `fill` (the
+#' stat maps it to `after_stat(level)`), which becomes a categorized
+#' renderer, one category per level of the fill scale. `level` is the only
+#' computed value written, so any other `colour`/`fill` expression is an
+#' error, as is a mapping the geom does not draw (`fill` on the lines,
+#' `colour` on the bands). The constant `colour`, `linewidth`, `linetype`
+#' and `alpha` are carried over like any other line or polygon layer's.
+#' A multi-band SpatRaster is not supported, and neither is
 #' `geom_spatraster_contour_text()`.
 #'
-#' The layer is named `"<band>_contour"` by default, so overlaying the
-#' contour lines on the raster itself gives two distinguishable layers.
+#' The layers are named `"<band>_contour"` and `"<band>_contour_filled"`
+#' by default, so overlaying the contours on the raster itself gives
+#' distinguishable layers.
 #'
 #' `geom_spatraster()` appends an invisible helper layer (a single empty
 #' point carrying the raster's CRS to `coord_sf()`). Such a layer draws
@@ -418,9 +427,11 @@ QGS_BASEMAPS <- list(
 #' @param plot A ggplot object whose layers are backed by sf data (or
 #'   SpatVector data, see *SpatVector layers*), one of the supported
 #'   data.frame geoms (see *Data frame layers*),
-#'   [tidyterra::geom_spatraster()], [tidyterra::geom_spatraster_rgb()] or
-#'   [tidyterra::geom_spatraster_contour()] (see *SpatRaster layers*), or a
-#'   tmap object (see *tmap plots* and *tmap raster layers*).
+#'   [tidyterra::geom_spatraster()], [tidyterra::geom_spatraster_rgb()],
+#'   [tidyterra::geom_spatraster_contour()] or
+#'   [tidyterra::geom_spatraster_contour_filled()] (see *SpatRaster
+#'   layers*), or a tmap object (see *tmap plots* and *tmap raster
+#'   layers*).
 #' @param path Path of the `.qgs` file to write. Tilde paths (e.g. `~/x.qgs`)
 #'   are expanded.
 #' @param use_plot_crs If `TRUE`, the project (map canvas) CRS is the plot's
@@ -592,7 +603,14 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
     d <- layer_data[[i]]
     is_rgb <- qgs_is_spatraster_rgb_layer(layer)
     is_raster <- is_rgb || qgs_is_spatraster_layer(layer)
-    is_contour <- qgs_is_spatraster_contour_layer(layer)
+    # NULL for anything but a contour layer, else which kind it is (see
+    # contour.R): the two differ in their geometry and in how their
+    # varying color is resolved.
+    contour <- if (qgs_is_spatraster_contour_layer(layer)) {
+      "lines"
+    } else if (qgs_is_spatraster_contour_filled_layer(layer)) {
+      "filled"
+    }
     sf_data <- inherits(d, "sf")
     is_text <- qgs_is_text_layer(layer)
     label <- NULL
@@ -623,10 +641,14 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
       if (!inherits(layer$stat, "StatSfCoordinates")) {
         d <- qgs_text_df_sf(plot, built, layer, i, d)
       }
-    } else if (is_contour) {
+    } else if (identical(contour, "lines")) {
       # geom_spatraster_contour(): the isolines the stat computed become a
       # LineString layer (see contour.R).
       d <- qgs_contour_sf(built, layer, i)
+    } else if (identical(contour, "filled")) {
+      # geom_spatraster_contour_filled(): the bands the stat computed
+      # become a Polygon layer (see contour.R).
+      d <- qgs_contour_filled_sf(built, layer, i)
     } else if (!sf_data) {
       qgs_check_contour_geom(layer, i)
       d <- qgs_df_layer_sf(plot, built, layer, i, d)
@@ -684,7 +706,7 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
         style_none()
       } else {
         qgs_vector_style(
-          plot, built, layer, i, d, gradient_style, geometry, is_contour
+          plot, built, layer, i, d, gradient_style, geometry, contour
         )
       },
       label = label
@@ -822,7 +844,7 @@ qgs_layer_names <- function(plot, layer_names, layer_data, keep) {
 # The band name a tidyterra raster-derived layer is named after: its
 # constructor is a bare ggplot2::layer() call and its data an internal
 # tibble, so the derivations in qgs_derived_layer_name() would never find
-# anything useful. A geom_spatraster_contour() layer gets a "_contour"
+# anything useful. The contour layers get a "_contour" / "_contour_filled"
 # suffix: overlaying the contour lines on the raster itself (tidyterra's
 # own example) would otherwise name both after the same band and leave the
 # collision suffix ("elevation_2") to say which is which. NULL for any
@@ -836,6 +858,8 @@ qgs_tidyterra_layer_name <- function(layer, d) {
     as.character(band[[1L]])
   } else if (qgs_is_spatraster_contour_layer(layer)) {
     paste0(as.character(band[[1L]]), "_contour")
+  } else if (qgs_is_spatraster_contour_filled_layer(layer)) {
+    paste0(as.character(band[[1L]]), "_contour_filled")
   }
 }
 
@@ -1156,14 +1180,15 @@ qgs_style_attribute <- function(plot, layer, i, d) {
 
 # Resolves the aesthetics of a layer into the matching style. A contour
 # layer resolves its varying color differently (its data has no user
-# columns, see contour.R); everything after that is shared.
+# columns, see contour.R); everything after that is shared. `contour` is
+# NULL, "lines" or "filled".
 qgs_vector_style <- function(plot, built, layer, i, d, gradient_style,
-                             geometry, is_contour = FALSE) {
-  mapped <- if (is_contour) {
-    qgs_contour_style_attribute(plot, layer, i)
-  } else {
+                             geometry, contour = NULL) {
+  mapped <- switch(contour %||% "",
+    lines = qgs_contour_style_attribute(plot, layer, i),
+    filled = qgs_contour_filled_style_attribute(plot, layer, i),
     qgs_style_attribute(plot, layer, i, d)
-  }
+  )
 
   const <- qgs_layer_constants(built@data[[i]], geometry, i)
   is_point <- geometry == "Point"
