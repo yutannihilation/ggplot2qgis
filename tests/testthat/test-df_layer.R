@@ -447,3 +447,28 @@ test_that("sf and data.frame layers mix in one project", {
   expect_match(r$out, 'attr="AREA"', fixed = TRUE)
   expect_match(r$out, 'geometry="Point"', fixed = TRUE)
 })
+
+test_that("geom_point's marker constants and alpha are carried over", {
+  pts <- read_pts()
+  p <- ggplot2::ggplot(pts) +
+    ggplot2::geom_point(
+      ggplot2::aes(lon, lat),
+      size = 3, shape = 22, fill = "red", colour = "blue", alpha = 0.5
+    ) +
+    ggplot2::coord_sf(crs = 4326)
+
+  r <- write_df_qgs(p)
+
+  # size 3 mm + 2/3 of the default stroke 0.5, of which R's square spans
+  # 3/4 * sqrt(pi / 4); both colors are half transparent.
+  expect_equal(marker_option(r$out, "name"), "square")
+  expect_equal(marker_option(r$out, "size"), "2.2230526")
+  expect_equal(
+    marker_option(r$out, "color"),
+    "255,0,0,128,rgb:1,0,0,0.5019608"
+  )
+  expect_equal(
+    marker_option(r$out, "outline_color"),
+    "0,0,255,128,rgb:0,0,1,0.5019608"
+  )
+})

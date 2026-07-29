@@ -77,6 +77,13 @@ by QGIS's own labeling engine, and `geom_point()`, `geom_path()`,
 `geom_line()` and `geom_polygon()` on a plain data frame are converted to
 sf layers (the plot must use `coord_sf()`).
 
+Beyond the colors, the constants ggplot2 computed for a layer are carried
+over: `linewidth` and `linetype`, and on a point layer `size` / `stroke` as
+the marker's size in millimeters, `shape` as the QGIS marker of the same
+outline, and `alpha` as the alpha component of the colors ggplot2 applies it
+to (a polygon's interior but not its border, a line's color, both colors of
+a marker).
+
 See `?write_qgs` for the full set of options (`use_plot_crs`,
 `gradient_style`, `basemap`).
 
@@ -195,7 +202,8 @@ write_qgs(x, "land.qgs")
 - Vector
   - [ ] tmap's `tm_text()`
   - [ ] tmap's `tm_symbols()` / `tm_dots()` on polygon shapes (centroids)
-  - [ ] ggplot2's constant `size` / `shape` / `alpha` (tmap's are supported)
+  - [ ] an alpha a color carries itself (`colour = "#FF000080"`): only the
+    `alpha` aesthetic and tmap's `fill_alpha`/`col_alpha` are carried over
 - Raster
   - [ ] `geom_spatraster()` on a multi-layer SpatRaster (tidyterra facets
     by band, so one layer per band)
