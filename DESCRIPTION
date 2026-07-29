@@ -8,7 +8,7 @@ Authors@R:
              email = "yutani.ini@gmail.com",
              comment = c(ORCID = "0000-0002-3385-7233")))
 Description: Convert a 'ggplot2'-based map plot (e.g. 'geom_sf()') or a 'tmap' map into a 'QGIS' project ('.qgs') file.
-License: MIT + file LICENSE
+License: GPL-2 + file LICENSE
 URL: https://github.com/yutannihilation/ggplot2qgis, https://yutannihilation.github.io/ggplot2qgis/
 BugReports: https://github.com/yutannihilation/ggplot2qgis/issues
 Encoding: UTF-8
