@@ -1049,3 +1049,280 @@ test_that("the missing-value layer inherits the lty", {
     fixed = TRUE
   )
 })
+
+# --- symbol size, shape and alpha constants ---------------------------
+
+# The marker options of the first map layer's symbol (the project template
+# carries symbols of its own before the layers).
+marker_option <- function(out, name) {
+  # (?s) so the patterns span the pretty-printed XML's newlines.
+  layers <- sub("(?s).*?<maplayer", "<maplayer", out, perl = TRUE)
+  block <- regmatches(
+    layers,
+    regexpr('(?s)<layer class="SimpleMarker".*?</layer>', layers, perl = TRUE)
+  )
+  pattern <- paste0('<Option name="', name, '" type="QString" value="[^"]*"/>')
+  option <- regmatches(block, regexpr(pattern, block))
+  if (length(option) == 0L) {
+    return(NA_character_)
+  }
+  sub('.*value="([^"]*)"/>', "\\1", option)
+}
+
+write_marker <- function(x, env = parent.frame()) {
+  dir <- local_out_dir(env = env)
+  path <- file.path(dir, "proj.qgs")
+  write_qgs_quiet(x, path)
+  read_qgs(path)
+}
+
+test_that("tmap's symbol size becomes the marker size in millimeters", {
+  skip_if_no_tmap()
+  metro <- tmap_data("metro")
+
+  # size 1 line = 5.08 mm, of which R's circle spans 3/4.
+  out <- write_marker(tmap::tm_shape(metro) + tmap::tm_symbols())
+  expect_equal(marker_option(out, "size"), "3.81")
+  expect_equal(marker_option(out, "name"), "circle")
+
+  # tm_dots() is the same circle at size 0.3.
+  out <- write_marker(tmap::tm_shape(metro) + tmap::tm_dots())
+  expect_equal(marker_option(out, "size"), "1.143")
+
+  # A doubled size doubles the marker.
+  out <- write_marker(tmap::tm_shape(metro) + tmap::tm_symbols(size = 2))
+  expect_equal(marker_option(out, "size"), "7.62")
+
+  # tm_layout(scale = ) is already folded into tmap's own size.
+  out <- write_marker(
+    tmap::tm_shape(metro) + tmap::tm_symbols() + tmap::tm_layout(scale = 2)
+  )
+  expect_equal(marker_option(out, "size"), "7.62")
+})
+
+test_that("tmap's symbol shape becomes the QGIS marker", {
+  skip_if_no_tmap()
+  metro <- tmap_data("metro")
+  shaped <- function(shape) {
+    write_marker(tmap::tm_shape(metro) + tmap::tm_symbols(shape = shape))
+  }
+
+  # A square is narrower than the circle of the same size (sqrt(pi / 4)).
+  out <- shaped(22)
+  expect_equal(marker_option(out, "name"), "square")
+  expect_equal(marker_option(out, "size"), "3.3765363")
+
+  out <- shaped(23)
+  expect_equal(marker_option(out, "name"), "diamond")
+
+  # QGIS inscribes its equilateral triangle in the size circle, so the
+  # marker is wider than R's ink; pch 25 is the same triangle, rotated.
+  out <- shaped(24)
+  expect_equal(marker_option(out, "name"), "equilateral_triangle")
+  expect_equal(marker_option(out, "size"), "5.9249921")
+  expect_equal(marker_option(out, "angle"), "0")
+  out <- shaped(25)
+  expect_equal(marker_option(out, "name"), "equilateral_triangle")
+  expect_equal(marker_option(out, "angle"), "180")
+
+  out <- shaped(3)
+  expect_equal(marker_option(out, "name"), "cross")
+  out <- shaped(4)
+  expect_equal(marker_option(out, "name"), "cross2")
+})
+
+test_that("an open pch keeps its interior undrawn", {
+  skip_if_no_tmap()
+  metro <- tmap_data("metro")
+
+  # R draws pch 0-6 with `col` alone, so the marker is stroke-only:
+  # QGIS has no "no fill" flag on a marker, hence a transparent color.
+  out <- write_marker(
+    tmap::tm_shape(metro) + tmap::tm_symbols(shape = 1, col = "red")
+  )
+  expect_match(marker_option(out, "color"), ",0,rgb:[0-9.,]+,0$")
+  expect_equal(
+    marker_option(out, "outline_color"),
+    "255,0,0,255,rgb:1,0,0,1"
+  )
+})
+
+test_that("a solid pch is drawn in tmap's fill, with no distinct border", {
+  skip_if_no_tmap()
+  metro <- tmap_data("metro")
+
+  # tmap swaps `col` into `fill` for pch 15-20 (swap_pch_15_20()), which
+  # R then uses for the whole symbol.
+  out <- write_marker(
+    tmap::tm_shape(metro) + tmap::tm_dots(fill = "red")
+  )
+  expect_equal(marker_option(out, "color"), "255,0,0,255,rgb:1,0,0,1")
+  expect_equal(
+    marker_option(out, "outline_color"),
+    "255,0,0,255,rgb:1,0,0,1"
+  )
+})
+
+test_that("a shape QGIS cannot draw is an error", {
+  skip_if_no_tmap()
+  metro <- tmap_data("metro")
+  dir <- local_out_dir()
+
+  expect_error(
+    write_qgs_quiet(
+      tmap::tm_shape(metro) + tmap::tm_symbols(shape = 7),
+      file.path(dir, "proj.qgs")
+    ),
+    "unsupported symbol shape"
+  )
+  # A color mapped to the slot the shape does not draw would silently
+  # render something tmap does not.
+  expect_error(
+    write_qgs_quiet(
+      tmap::tm_shape(metro) + tmap::tm_symbols(shape = 19, col = "pop2020"),
+      file.path(dir, "proj2.qgs")
+    ),
+    "does not draw it"
+  )
+})
+
+test_that("fill_alpha and col_alpha ride along with the colors", {
+  skip_if_no_tmap()
+  nc <- read_nc()
+
+  x <- tmap::tm_shape(nc) +
+    tmap::tm_polygons(
+      fill = "red", fill_alpha = 0.4,
+      col = "blue", col_alpha = 0.8
+    )
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs_quiet(x, path)
+
+  out <- read_qgs(path)
+  # 0.4 * 255 = 102, 0.8 * 255 = 204: QGIS renders a translucent fill
+  # under a more opaque border, which its symbol-wide opacity could not.
+  expect_match(
+    out,
+    '<Option name="color" type="QString" value="255,0,0,102,rgb:1,0,0,0.4"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    paste0(
+      '<Option name="outline_color" type="QString" ',
+      'value="0,0,255,204,rgb:0,0,1,0.8"/>'
+    ),
+    fixed = TRUE
+  )
+})
+
+test_that("the classes of a graduated style carry the alpha", {
+  skip_if_no_tmap()
+  nc <- read_nc()
+
+  x <- tmap::tm_shape(nc) + tmap::tm_polygons(fill = "AREA", fill_alpha = 0.4)
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs_quiet(x, path)
+
+  out <- read_qgs(path)
+  expect_match(out, 'value="223,237,255,102,rgb:', fixed = TRUE)
+  # The class colors all do, not just the first.
+  expect_no_match(
+    out,
+    '<Option name="color" type="QString" value="[0-9,]+,255,rgb:'
+  )
+})
+
+test_that("a continuous style overrides the alpha of the ramp expression", {
+  skip_if_no_tmap()
+  nc <- read_nc()
+
+  x <- tmap::tm_shape(nc) +
+    tmap::tm_polygons(
+      fill = "AREA",
+      fill.scale = tmap::tm_scale_continuous(),
+      fill_alpha = 0.4
+    )
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs_quiet(x, path, gradient_style = "continuous")
+
+  out <- read_qgs(path)
+  # ramp_color() returns opaque colors, so the alpha is set per feature.
+  expect_match(out, "set_color_part(ramp_color(", fixed = TRUE)
+  expect_match(out, ",'alpha',102)", fixed = TRUE)
+})
+
+test_that("an alpha of 0 means the slot is not drawn", {
+  skip_if_no_tmap()
+  nc <- read_nc()
+
+  x <- tmap::tm_shape(nc) + tmap::tm_polygons(fill = "red", fill_alpha = 0)
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs_quiet(x, path)
+
+  out <- read_qgs(path)
+  expect_match(
+    out,
+    '<Option name="style" type="QString" value="no"/>',
+    fixed = TRUE
+  )
+
+  # With neither slot drawn there is nothing left of the layer.
+  expect_error(
+    write_qgs_quiet(
+      tmap::tm_shape(nc) +
+        tmap::tm_polygons(fill_alpha = 0, col_alpha = 0),
+      file.path(dir, "proj2.qgs")
+    ),
+    "would not be drawn"
+  )
+})
+
+test_that("the missing-value layer inherits the marker and the alpha", {
+  skip_if_no_tmap()
+  metro <- tmap_data("metro")
+  metro$pop2020[1:3] <- NA
+
+  x <- tmap::tm_shape(metro) +
+    tmap::tm_symbols(fill = "pop2020", size = 2, shape = 22, fill_alpha = 0.5)
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  write_qgs_quiet(x, path)
+
+  out <- read_qgs(path)
+  expect_match(out, "(missing value)", fixed = TRUE)
+  # Every marker in the project — the classes and the missing-value
+  # layer's single symbol — is the same square at the same opacity.
+  expect_no_match(out, '<Option name="name" type="QString" value="circle"/>')
+  sizes <- regmatches(
+    out,
+    gregexpr('<Option name="size" type="QString" value="[^"]*"/>', out)
+  )[[1]]
+  expect_equal(unique(sizes), sizes[1])
+  expect_match(sizes[1], "6.7530726", fixed = TRUE)
+})
+
+test_that("a constant that varies by feature warns and uses the first", {
+  # A tmap layer cannot currently produce one (a length > 1 constant is
+  # read as several variables, i.e. facets, which is rejected earlier),
+  # but the renderers vary the color and nothing else, so the guard has
+  # to hold for whatever tmap puts in the column.
+  md <- data.frame(size = c(2, 3), fill_alpha = c(1, 1))
+
+  expect_warning(
+    value <- qgs_tmap_constant(md, "size", 1L),
+    "a `size` that varies by feature"
+  )
+  expect_equal(value, 2)
+  expect_silent(qgs_tmap_constant(md, "fill_alpha", 1L))
+  expect_null(qgs_tmap_constant(md, "shape", 1L))
+})

@@ -531,6 +531,103 @@ test_that("invalid styles are errors", {
   )
 })
 
+test_that("a marker keeps QGIS's defaults until style_set_marker()", {
+  out <- render("Point", style_single(c(0L, 0L, 0L)))
+  expect_match(
+    out,
+    '<Option name="name" type="QString" value="circle"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="size" type="QString" value="2"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="angle" type="QString" value="0"/>',
+    fixed = TRUE
+  )
+})
+
+test_that("style_set_marker() writes the shape, size and rotation", {
+  style <- style_set_marker(
+    style_single(c(0L, 0L, 0L)),
+    "equilateral_triangle", 5.925, angle = 180
+  )
+  out <- render("Point", style)
+
+  expect_match(
+    out,
+    '<Option name="name" type="QString" value="equilateral_triangle"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="size" type="QString" value="5.925"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="angle" type="QString" value="180"/>',
+    fixed = TRUE
+  )
+  expect_error(
+    style_set_marker(style_single(c(0L, 0L, 0L)), "circle", 0),
+    "marker size must be positive"
+  )
+})
+
+test_that("a marker without a fill is drawn fully transparent", {
+  # SimpleMarker has no "no fill" flag, unlike SimpleFill's style="no".
+  out <- render("Point", style_single(NULL))
+
+  expect_match(
+    out,
+    '<Option name="color" type="QString" value="229,229,229,0,rgb:',
+    fixed = TRUE
+  )
+  expect_no_match(
+    out,
+    '<Option name="style" type="QString" value="no"/>',
+    fixed = TRUE
+  )
+})
+
+test_that("style_set_alpha() gives each color slot its own opacity", {
+  style <- style_set_alpha(
+    style_set_outline(style_single(c(255L, 0L, 0L)), c(0L, 0L, 255L), 0.5),
+    102L, 204L
+  )
+  out <- render("Polygon", style)
+
+  expect_match(
+    out,
+    '<Option name="color" type="QString" value="255,0,0,102,rgb:1,0,0,0.4"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    paste0(
+      '<Option name="outline_color" type="QString" ',
+      'value="0,0,255,204,rgb:0,0,1,0.8"/>'
+    ),
+    fixed = TRUE
+  )
+})
+
+test_that("a translucent continuous style overrides the expression alpha", {
+  style <- style_set_alpha(style_continuous("AREA", 0, 1, bw_stops()), 102L, 255L)
+  out <- render("Polygon", style)
+
+  expect_match(out, "set_color_part(ramp_color(create_ramp(", fixed = TRUE)
+  expect_match(out, ",'alpha',102)", fixed = TRUE)
+
+  # An opaque fill keeps the bare ramp expression.
+  opaque <- render("Polygon", style_continuous("AREA", 0, 1, bw_stops()))
+  expect_no_match(opaque, "set_color_part", fixed = TRUE)
+})
+
 test_that("a raster pseudocolor renderer interpolates the stops", {
   stops <- list(
     offsets = c(0, 0.5, 1),

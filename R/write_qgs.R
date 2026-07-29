@@ -220,9 +220,11 @@ QGS_BASEMAPS <- list(
 #'   renderer with 25 equal-interval classes, or an exact continuous
 #'   gradient with `gradient_style = "continuous"`.
 #'
-#' A layer maps either `fill` or `col` to a data column (not both); a
-#' constant `lty` is carried over (see *Line types*), while the other
-#' visual constants (symbol size, alpha) keep the QGIS defaults.
+#' A layer maps either `fill` or `col` to a data column (not both). The
+#' constants tmap computed for the layer — `lwd`, `lty` (see *Line
+#' types*), `size`, `shape`, `fill_alpha` and `col_alpha` — are carried
+#' over as described in *tmap symbol constants*; a constant that varies
+#' between features is dropped down to its first value, with a warning.
 #' Layers sharing one [tmap::tm_shape()] share one GeoPackage: the data is
 #' written once and every layer of the shape references the same table.
 #'
@@ -260,6 +262,38 @@ QGS_BASEMAPS <- list(
 #'
 #' The conversion relies on tmap internals that are not part of its public
 #' API, so a tmap version older than 4.4 is rejected.
+#'
+#' # tmap symbol constants
+#'
+#' A symbol layer's `size` is a multiple of the text line height, which is
+#' 5.08 mm on an R device with the default 12 pt font — the QGIS marker
+#' size is that, times the fraction of it the shape's ink actually spans
+#' (3/4 for a circle), so a default `tm_symbols()` marker is 3.81 mm and a
+#' `tm_dots()` one 1.143 mm. A device opened with a different `pointsize`
+#' would draw tmap's symbols at a different physical size; the conversion
+#' assumes the default. [tmap::tm_layout()]'s `scale` is already part of
+#' the size tmap computes, so it carries over.
+#'
+#' `shape` becomes the QGIS marker of the same outline: pch 0/15/22 a
+#' `square`, 1/16/19/20/21 a `circle`, 5/18/23 a `diamond`, 2/17/24 an
+#' `equilateral_triangle` (6/25 the same, rotated 180 degrees), 3 a
+#' `cross` and 4 a `cross2`. The composite symbols (pch 7-14), R's thin
+#' asterisk (8) and tmap's grob shapes have no QGIS counterpart and are
+#' errors rather than a silently different marker. How R colors the shape
+#' decides where tmap's colors go: pch 0-6 are stroke-only, so the marker
+#' gets a transparent interior and its `col` outline; pch 15-20 are filled
+#' with a single color and get no distinct border; pch 21-25 fill with
+#' `fill` and stroke with `col`. Mapping a color to the slot the shape
+#' does not draw is an error.
+#'
+#' `fill_alpha` and `col_alpha` become the alpha component of the
+#' respective colors, so a translucent fill can sit under an opaque
+#' border — which QGIS's symbol-wide opacity could not express. An alpha
+#' of 0 means "not drawn", like an NA color, and a layer with nothing left
+#' to draw is an error. The colors of a graduated or categorized
+#' renderer's classes carry the alpha too, but the renderer's `[source]`
+#' color ramp stays opaque: it is the palette rather than the rendering
+#' opacity, so re-classifying the layer in QGIS drops the transparency.
 #'
 #' # tmap raster layers
 #'
