@@ -549,7 +549,8 @@ callout_line_symbol <- function() {
     '<Option name="type" type="QString" value="collection"/>',
     "</Option>"
   )
-  options <- symbol_options("LineString", c(60L, 60L, 60L), NULL, 0.3)
+  style <- style_set_outline(style_single(NULL), NULL, 0.3)
+  options <- symbol_options("LineString", style, c(60L, 60L, 60L), NULL)
   paste0(
     '<symbol alpha="1" clip_to_extent="1" force_rhr="0" frame_rate="10"',
     ' is_animated="0" name="symbol" type="line">',

@@ -299,9 +299,11 @@ renderer with 25 equal-interval classes, or an exact continuous
 gradient with \code{gradient_style = "continuous"}.
 }
 
-A layer maps either \code{fill} or \code{col} to a data column (not both); a
-constant \code{lty} is carried over (see \emph{Line types}), while the other
-visual constants (symbol size, alpha) keep the QGIS defaults.
+A layer maps either \code{fill} or \code{col} to a data column (not both). The
+constants tmap computed for the layer — \code{lwd}, \code{lty} (see \emph{Line
+types}), \code{size}, \code{shape}, \code{fill_alpha} and \code{col_alpha} — are carried
+over as described in \emph{tmap symbol constants}; a constant that varies
+between features is dropped down to its first value, with a warning.
 Layers sharing one \code{\link[tmap:tm_shape]{tmap::tm_shape()}} share one GeoPackage: the data is
 written once and every layer of the shape references the same table.
 
@@ -339,6 +341,38 @@ main shape's bounding box. \code{use_plot_crs = FALSE} forces EPSG:3857.
 
 The conversion relies on tmap internals that are not part of its public
 API, so a tmap version older than 4.4 is rejected.
+}
+
+\section{tmap symbol constants}{
+A symbol layer's \code{size} is a multiple of the text line height, which is
+5.08 mm on an R device with the default 12 pt font — the QGIS marker
+size is that, times the fraction of it the shape's ink actually spans
+(3/4 for a circle), so a default \code{tm_symbols()} marker is 3.81 mm and a
+\code{tm_dots()} one 1.143 mm. A device opened with a different \code{pointsize}
+would draw tmap's symbols at a different physical size; the conversion
+assumes the default. [tmap::tm_layout()]'s \code{scale} is already part of
+the size tmap computes, so it carries over.
+
+\code{shape} becomes the QGIS marker of the same outline: pch 0/15/22 a
+\code{square}, 1/16/19/20/21 a \code{circle}, 5/18/23 a \code{diamond}, 2/17/24 an
+\code{equilateral_triangle} (6/25 the same, rotated 180 degrees), 3 a
+\code{cross} and 4 a \code{cross2}. The composite symbols (pch 7-14), R's thin
+asterisk (8) and tmap's grob shapes have no QGIS counterpart and are
+errors rather than a silently different marker. How R colors the shape
+decides where tmap's colors go: pch 0-6 are stroke-only, so the marker
+gets a transparent interior and its \code{col} outline; pch 15-20 are filled
+with a single color and get no distinct border; pch 21-25 fill with
+\code{fill} and stroke with \code{col}. Mapping a color to the slot the shape
+does not draw is an error.
+
+\code{fill_alpha} and \code{col_alpha} become the alpha component of the
+respective colors, so a translucent fill can sit under an opaque
+border — which QGIS's symbol-wide opacity could not express. An alpha
+of 0 means "not drawn", like an NA color, and a layer with nothing left
+to draw is an error. The colors of a graduated or categorized
+renderer's classes carry the alpha too, but the renderer's \verb{[source]}
+color ramp stays opaque: it is the palette rather than the rendering
+opacity, so re-classifying the layer in QGIS drops the transparency.
 }
 
 \section{tmap raster layers}{
@@ -379,6 +413,8 @@ curvilinear, rotated or irregularly spaced grids are errors.
 
 [a, b)\verb{) while every QGIS classed renderer is right-closed (}(a, b]: R:a,\%20b)\%60)\%20while\%20every\%20QGIS\%20classed\%20renderer\%20is\%20right-closed\%0A(\%60(a,\%20b
 [tmap::tm_crs()]: R:tmap::tm_crs()
+[tmap::tm_layout()]: R:tmap::tm_layout()
+[source]: R:source
 \code{\link[tmap:tm_raster]{tmap::tm_raster()}}: R:tmap::tm_raster()
 \code{\link[tmap:tm_shape]{tmap::tm_shape()}}: R:tmap::tm_shape()
 \code{\link[tmap:tm_scale_intervals]{tmap::tm_scale_intervals()}}: R:tmap::tm_scale_intervals()

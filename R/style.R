@@ -14,9 +14,10 @@
 #   - "continuous":  attribute, min, max, stops
 #   - "categorized": attribute, values, colors, catch_all
 # plus the shared fields target ("fill"/"stroke"), fill_color,
-# outline_color, outline_width and linetype. A color is an integer vector
-# c(r, g, b) in 0..255, or NULL for "not drawn" (ggplot2's fill/colour =
-# NA) where a symbol supports it: a polygon's fill or any outline.
+# outline_color, outline_width, linetype, marker and the two alphas (see
+# style_defaults()). A color is an integer vector c(r, g, b) in 0..255,
+# or NULL for "not drawn" (ggplot2's fill/colour = NA) where a symbol
+# supports it: a polygon's fill, a marker's fill, or any outline.
 # `stops` is list(offsets = <numeric n>, colors = <3 x n integer matrix>)
 # with offsets ascending from 0 to 1. A linetype is either a QGIS
 # pen-style preset ("no", "solid", "dash", "dot", "dash dot") or an
@@ -35,6 +36,24 @@
 QGS_DEFAULT_OUTLINE_COLOR <- c(35L, 35L, 35L)
 QGS_DEFAULT_OUTLINE_WIDTH <- 0.26
 QGS_DEFAULT_FILL_COLOR <- c(229L, 229L, 229L)
+# QGIS's default marker: a 2 mm circle, unrotated (see style_set_marker()).
+QGS_DEFAULT_MARKER <- list(name = "circle", size = 2, angle = 0)
+QGS_OPAQUE <- 255L
+
+# The constants every vector style carries on top of its own fields: the
+# stroke (color, width, pen style), the marker geometry of a Point layer,
+# and the opacity of the two color slots. Spliced into each style_*()
+# constructor so the defaults live in one place.
+style_defaults <- function() {
+  list(
+    outline_color = QGS_DEFAULT_OUTLINE_COLOR,
+    outline_width = QGS_DEFAULT_OUTLINE_WIDTH,
+    linetype = "solid",
+    marker = QGS_DEFAULT_MARKER,
+    fill_alpha = QGS_OPAQUE,
+    stroke_alpha = QGS_OPAQUE
+  )
+}
 
 # Validates the shared constraints of ramp-based styles.
 validate_ramp <- function(classes, min, max, stops) {
@@ -85,12 +104,12 @@ style_none <- function() {
 # Single symbol with the given fill color (NULL = not drawn, polygons
 # only), dark gray 0.26 mm outline (QGIS defaults).
 style_single <- function(color) {
-  list(
-    type = "single",
-    color = color,
-    outline_color = QGS_DEFAULT_OUTLINE_COLOR,
-    outline_width = QGS_DEFAULT_OUTLINE_WIDTH,
-    linetype = "solid"
+  c(
+    list(
+      type = "single",
+      color = color
+    ),
+    style_defaults()
   )
 }
 
@@ -98,18 +117,18 @@ style_single <- function(color) {
 # between `min` and `max`. Class colors are interpolated along `stops`.
 style_graduated <- function(attribute, classes, min, max, stops) {
   validate_ramp(classes, min, max, stops)
-  list(
-    type = "graduated",
-    attribute = attribute,
-    classes = as.integer(classes),
-    min = min,
-    max = max,
-    stops = stops,
-    target = "fill",
-    fill_color = QGS_DEFAULT_FILL_COLOR,
-    outline_color = QGS_DEFAULT_OUTLINE_COLOR,
-    outline_width = QGS_DEFAULT_OUTLINE_WIDTH,
-    linetype = "solid"
+  c(
+    list(
+      type = "graduated",
+      attribute = attribute,
+      classes = as.integer(classes),
+      min = min,
+      max = max,
+      stops = stops,
+      target = "fill",
+      fill_color = QGS_DEFAULT_FILL_COLOR
+    ),
+    style_defaults()
   )
 }
 
@@ -133,16 +152,16 @@ style_binned <- function(attribute, boundaries, colors) {
       call. = FALSE
     )
   }
-  list(
-    type = "binned",
-    attribute = attribute,
-    boundaries = boundaries,
-    colors = colors,
-    target = "fill",
-    fill_color = QGS_DEFAULT_FILL_COLOR,
-    outline_color = QGS_DEFAULT_OUTLINE_COLOR,
-    outline_width = QGS_DEFAULT_OUTLINE_WIDTH,
-    linetype = "solid"
+  c(
+    list(
+      type = "binned",
+      attribute = attribute,
+      boundaries = boundaries,
+      colors = colors,
+      target = "fill",
+      fill_color = QGS_DEFAULT_FILL_COLOR
+    ),
+    style_defaults()
   )
 }
 
@@ -158,17 +177,17 @@ style_continuous <- function(attribute, min, max, stops) {
     )
   }
   validate_color_stops(stops)
-  list(
-    type = "continuous",
-    attribute = attribute,
-    min = min,
-    max = max,
-    stops = stops,
-    target = "fill",
-    fill_color = QGS_DEFAULT_FILL_COLOR,
-    outline_color = QGS_DEFAULT_OUTLINE_COLOR,
-    outline_width = QGS_DEFAULT_OUTLINE_WIDTH,
-    linetype = "solid"
+  c(
+    list(
+      type = "continuous",
+      attribute = attribute,
+      min = min,
+      max = max,
+      stops = stops,
+      target = "fill",
+      fill_color = QGS_DEFAULT_FILL_COLOR
+    ),
+    style_defaults()
   )
 }
 
@@ -191,18 +210,18 @@ style_categorized <- function(attribute, values, colors, catch_all = NULL,
       call. = FALSE
     )
   }
-  list(
-    type = "categorized",
-    attribute = attribute,
-    values = as.character(values),
-    colors = colors,
-    catch_all = catch_all,
-    value_type = match.arg(value_type),
-    target = "fill",
-    fill_color = QGS_DEFAULT_FILL_COLOR,
-    outline_color = QGS_DEFAULT_OUTLINE_COLOR,
-    outline_width = QGS_DEFAULT_OUTLINE_WIDTH,
-    linetype = "solid"
+  c(
+    list(
+      type = "categorized",
+      attribute = attribute,
+      values = as.character(values),
+      colors = colors,
+      catch_all = catch_all,
+      value_type = match.arg(value_type),
+      target = "fill",
+      fill_color = QGS_DEFAULT_FILL_COLOR
+    ),
+    style_defaults()
   )
 }
 
@@ -224,6 +243,31 @@ style_set_outline <- function(style, color, width) {
 # the run lengths are approximated by the nearest one.
 style_set_linetype <- function(style, linetype) {
   style$linetype <- linetype
+  style
+}
+
+# Sets the marker of a Point layer: a QGIS SimpleMarker shape name
+# ("circle", "square", "diamond", "equilateral_triangle", "cross",
+# "cross2"), its size in millimeters and its rotation in degrees. QGIS
+# sizes a marker by its width, except `equilateral_triangle`, which is
+# inscribed in the circle of that diameter — the caller converts (see
+# QGS_TMAP_PCH in tmap.R). Ignored by the line and polygon symbols.
+style_set_marker <- function(style, name, size, angle = 0) {
+  if (size <= 0) {
+    stop("marker size must be positive, got ", num(size), call. = FALSE)
+  }
+  style$marker <- list(name = name, size = size, angle = angle)
+  style
+}
+
+# Sets the opacity of the two color slots, as integers in 0..255: the
+# interior (a polygon's or marker's fill) and the stroke (a line's body, a
+# polygon border, a marker ring). QGIS has a symbol-wide opacity too, but
+# only per-color alpha can render a translucent fill under an opaque
+# border, so the alphas ride along with the colors (see qgis_color()).
+style_set_alpha <- function(style, fill_alpha, stroke_alpha) {
+  style$fill_alpha <- as.integer(fill_alpha)
+  style$stroke_alpha <- as.integer(stroke_alpha)
   style
 }
 
@@ -528,25 +572,32 @@ linetype_preset <- function(linetype) {
 # Options of the symbol layer (<Option type="Map"> children), sorted by
 # name as QGIS writes them. A NULL fill (polygons) or outline color means
 # "not drawn": the style attribute becomes "no" and the color value keeps
-# the QGIS default, which QGIS ignores. A line's or marker's main color
-# cannot be NULL (there would be nothing to draw); callers guard that.
-# `linetype` is a preset or run-length linetype (see style_set_linetype);
-# only SimpleLine can draw run lengths exactly, as a custom dash in
-# millimeters, so a zero line width (nothing to scale the runs by) falls
-# back to the preset approximation like the other symbol classes.
-symbol_options <- function(geom, color, outline_color, outline_width,
-                           linetype = "solid") {
+# the QGIS default, which QGIS ignores. SimpleMarker has no such flag for
+# its interior, so a NULL marker fill (R's open pch) becomes a fully
+# transparent color instead. A line's main color cannot be NULL (there
+# would be nothing to draw); callers guard that.
+# The remaining constants come from `style`: the linetype (a preset or
+# run lengths, see style_set_linetype) — only SimpleLine can draw run
+# lengths exactly, as a custom dash in millimeters, so a zero line width
+# (nothing to scale the runs by) falls back to the preset approximation
+# like the other symbol classes — the marker geometry and the alpha of
+# each color slot.
+symbol_options <- function(geom, style, color, outline_color) {
   scale <- "3x:0,0,0,0,0,0"
+  outline_width <- style$outline_width
+  linetype <- style$linetype
   custom_dash <- is.numeric(linetype) && outline_width > 0
+  fill <- function(rgb) qgis_color(rgb, style$fill_alpha)
+  stroke <- function(rgb) qgis_color(rgb, style$stroke_alpha)
   switch(geom,
     Polygon = list(
       border_width_map_unit_scale = scale,
-      color = qgis_color(color %||% QGS_DEFAULT_FILL_COLOR),
+      color = fill(color %||% QGS_DEFAULT_FILL_COLOR),
       joinstyle = "bevel",
       offset = "0,0",
       offset_map_unit_scale = scale,
       offset_unit = "MM",
-      outline_color = qgis_color(outline_color %||% QGS_DEFAULT_OUTLINE_COLOR),
+      outline_color = stroke(outline_color %||% QGS_DEFAULT_OUTLINE_COLOR),
       outline_style = if (is.null(outline_color)) {
         "no"
       } else {
@@ -571,7 +622,7 @@ symbol_options <- function(geom, color, outline_color, outline_width,
       dash_pattern_offset_unit = "MM",
       draw_inside_polygon = "0",
       joinstyle = "bevel",
-      line_color = qgis_color(color),
+      line_color = stroke(color),
       line_style = if (custom_dash) "solid" else linetype_preset(linetype),
       line_width = num(outline_width),
       line_width_unit = "MM",
@@ -590,16 +641,20 @@ symbol_options <- function(geom, color, outline_color, outline_width,
       width_map_unit_scale = scale
     ),
     Point = list(
-      angle = "0",
+      angle = num(style$marker$angle),
       cap_style = "square",
-      color = qgis_color(color),
+      color = if (is.null(color)) {
+        qgis_color(QGS_DEFAULT_FILL_COLOR, 0L)
+      } else {
+        fill(color)
+      },
       horizontal_anchor_point = "1",
       joinstyle = "bevel",
-      name = "circle",
+      name = style$marker$name,
       offset = "0,0",
       offset_map_unit_scale = scale,
       offset_unit = "MM",
-      outline_color = qgis_color(outline_color %||% QGS_DEFAULT_OUTLINE_COLOR),
+      outline_color = stroke(outline_color %||% QGS_DEFAULT_OUTLINE_COLOR),
       outline_style = if (is.null(outline_color)) {
         "no"
       } else {
@@ -609,7 +664,7 @@ symbol_options <- function(geom, color, outline_color, outline_width,
       outline_width_map_unit_scale = scale,
       outline_width_unit = "MM",
       scale_method = "diameter",
-      size = "2",
+      size = num(style$marker$size),
       size_map_unit_scale = scale,
       size_unit = "MM",
       vertical_anchor_point = "1"
@@ -630,11 +685,13 @@ color_property_name <- function(geom, target) {
   }
 }
 
-# Writes a <symbol> element with a single symbol layer. The symbol layer's
-# targeted color can carry a data-defined expression override.
-write_symbol <- function(w, name, geom, color, outline_color, outline_width,
-                         linetype = "solid", color_expression = NULL,
-                         target = "fill") {
+# Writes a <symbol> element with a single symbol layer: `color` and
+# `outline_color` are the resolved colors of this symbol, everything else
+# (width, linetype, marker, alphas, target) comes from `style`. The symbol
+# layer's targeted color can carry a data-defined expression override.
+write_symbol <- function(w, name, geom, style, color, outline_color,
+                         color_expression = NULL) {
+  target <- style$target %||% "fill"
   class <- switch(geom,
     Point = "SimpleMarker",
     LineString = "SimpleLine",
@@ -658,7 +715,7 @@ write_symbol <- function(w, name, geom, color, outline_color, outline_width,
   xw_attr(w, "pass", "0")
   xw_start(w, "Option")
   xw_attr(w, "type", "Map")
-  options <- symbol_options(geom, color, outline_color, outline_width, linetype)
+  options <- symbol_options(geom, style, color, outline_color)
   for (key in names(options)) {
     xw_empty(
       w,
@@ -668,14 +725,30 @@ write_symbol <- function(w, name, geom, color, outline_color, outline_width,
   }
   xw_end(w) # Option
   property <- if (!is.null(color_expression)) {
+    alpha <- if (target == "stroke" || geom == "LineString") {
+      style$stroke_alpha
+    } else {
+      style$fill_alpha
+    }
     list(
       name = color_property_name(geom, target),
-      expression = color_expression
+      expression = with_alpha_expression(color_expression, alpha)
     )
   }
   write_data_defined_properties(w, "data_defined_properties", property)
   xw_end(w) # layer
   xw_end(w) # symbol
+}
+
+# A data-defined color expression at the given opacity. The colors a ramp
+# expression returns are opaque, so a translucent layer has to override
+# the alpha component per feature; an opaque slot keeps the bare
+# expression, which is what every project written before had.
+with_alpha_expression <- function(expression, alpha) {
+  if (alpha >= QGS_OPAQUE) {
+    return(expression)
+  }
+  sprintf("set_color_part(%s,'alpha',%d)", expression, alpha)
 }
 
 # Escapes a field name as a double-quoted QGIS expression identifier.
@@ -813,8 +886,7 @@ write_single_renderer <- function(w, geom, style) {
   xw_attr(w, "type", "singleSymbol")
   xw_start(w, "symbols")
   write_symbol(
-    w, "0", geom, style$color, style$outline_color, style$outline_width,
-    style$linetype
+    w, "0", geom, style, style$color, style$outline_color
   )
   xw_end(w) # symbols
   xw_empty(w, "rotation")
@@ -844,8 +916,8 @@ write_continuous_renderer <- function(w, geom, style) {
     style$outline_color
   )
   write_symbol(
-    w, "0", geom, colors$color, colors$outline, style$outline_width,
-    style$linetype, color_expression = expression, target = style$target
+    w, "0", geom, style, colors$color, colors$outline,
+    color_expression = expression
   )
   xw_end(w) # symbols
   xw_empty(w, "rotation")
@@ -890,8 +962,7 @@ write_graduated_renderer <- function(w, geom, style) {
       style$outline_color
     )
     write_symbol(
-      w, i, geom, colors$color, colors$outline, style$outline_width,
-      style$linetype
+      w, i, geom, style, colors$color, colors$outline
     )
   }
   xw_end(w) # symbols
@@ -903,8 +974,7 @@ write_graduated_renderer <- function(w, geom, style) {
     style$outline_color
   )
   write_symbol(
-    w, "0", geom, colors$color, colors$outline, style$outline_width,
-    style$linetype
+    w, "0", geom, style, colors$color, colors$outline
   )
   xw_end(w) # source-symbol
   n_stops <- length(style$stops$offsets)
@@ -978,8 +1048,7 @@ write_binned_renderer <- function(w, geom, style) {
       style$outline_color
     )
     write_symbol(
-      w, i - 1L, geom, colors$color, colors$outline, style$outline_width,
-      style$linetype
+      w, i - 1L, geom, style, colors$color, colors$outline
     )
   }
   xw_end(w) # symbols
@@ -991,8 +1060,7 @@ write_binned_renderer <- function(w, geom, style) {
     style$outline_color
   )
   write_symbol(
-    w, "0", geom, colors$color, colors$outline, style$outline_width,
-    style$linetype
+    w, "0", geom, style, colors$color, colors$outline
   )
   xw_end(w) # source-symbol
   write_gradient_colorramp(
@@ -1068,8 +1136,7 @@ write_categorized_renderer <- function(w, geom, style) {
       style$outline_color
     )
     write_symbol(
-      w, i - 1L, geom, colors$color, colors$outline, style$outline_width,
-      style$linetype
+      w, i - 1L, geom, style, colors$color, colors$outline
     )
   }
   if (!is.null(style$catch_all)) {
@@ -1080,8 +1147,7 @@ write_categorized_renderer <- function(w, geom, style) {
       style$outline_color
     )
     write_symbol(
-      w, n, geom, colors$color, colors$outline, style$outline_width,
-      style$linetype
+      w, n, geom, style, colors$color, colors$outline
     )
   }
   xw_end(w) # symbols
@@ -1093,8 +1159,7 @@ write_categorized_renderer <- function(w, geom, style) {
     style$outline_color
   )
   write_symbol(
-    w, "0", geom, colors$color, colors$outline, style$outline_width,
-    style$linetype
+    w, "0", geom, style, colors$color, colors$outline
   )
   xw_end(w) # source-symbol
   # The colorramp is only informational for a categorized renderer (used
