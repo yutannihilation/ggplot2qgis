@@ -1,14 +1,16 @@
-# tidyterra::geom_spatraster_contour() layers: unlike the other tidyterra
-# raster geoms this one draws *lines*, so the layer becomes an ordinary
-# GeoPackage-backed LineString layer rather than a GDAL raster layer.
+# tidyterra::geom_spatraster_contour() and
+# geom_spatraster_contour_filled() layers: unlike the other tidyterra
+# raster geoms these draw *vector* shapes — isolines and the bands
+# between them — so the layer becomes an ordinary GeoPackage-backed
+# LineString / Polygon layer rather than a GDAL raster layer.
 #
-# The isolines are not recomputed here — they are what
-# StatTerraSpatRasterContour already put in the built data, so the geom's
-# `breaks`/`bins`/`binwidth` (and the `maxcell` downsampling and
-# `mask_projection`) are reproduced by construction. One consequence: the
-# stat reprojects the raster to the coord CRS *before* contouring
-# (reproject_raster_on_stat()), so the x/y it emits are in the panel CRS,
-# not in the raster's own CRS.
+# Neither is recomputed here — they are what
+# StatTerraSpatRasterContour / StatTerraSpatRasterContourFill already put
+# in the built data, so the geom's `breaks`/`bins`/`binwidth` (and the
+# `maxcell` downsampling and `mask_projection`) are reproduced by
+# construction. One consequence: the stat reprojects the raster to the
+# coord CRS *before* contouring (reproject_raster_on_stat()), so the x/y
+# it emits are in the panel CRS, not in the raster's own CRS.
 #
 # The layer data is the same internal tibble geom_spatraster() uses (a
 # `spatraster` list column and a `lyr` factor of band names, see
@@ -19,13 +21,20 @@
 # to be by geom, not by stat: geom_spatraster_contour_text() is a
 # different geom on the *same* StatTerraSpatRasterContour.
 QGS_UNSUPPORTED_CONTOUR_GEOMS <- c(
-  GeomSpatRasterContourText = "geom_spatraster_contour_text()",
-  GeomSpatRasterContourFilled = "geom_spatraster_contour_filled()"
+  GeomSpatRasterContourText = "geom_spatraster_contour_text()"
 )
 
 qgs_is_spatraster_contour_layer <- function(layer) {
   inherits(layer$stat, "StatTerraSpatRasterContour") &&
     inherits(layer$geom, "GeomSpatRasterContour")
+}
+
+# geom_spatraster_contour_filled() has its own stat (not a subclass of
+# the isoline one), but it is checked by geom as well for symmetry: an
+# unknown geom on this stat is not something this file can draw.
+qgs_is_spatraster_contour_filled_layer <- function(layer) {
+  inherits(layer$stat, "StatTerraSpatRasterContourFill") &&
+    inherits(layer$geom, "GeomSpatRasterContourFilled")
 }
 
 # Rejects the contour geoms above by name. They would otherwise fall
@@ -47,37 +56,15 @@ qgs_check_contour_geom <- function(layer, i) {
 # one LINESTRING per contour piece, with the contour value (`level`) and
 # the band name (`lyr`) as attributes.
 qgs_contour_sf <- function(built, layer, i) {
-  d <- qgs_spatraster_data(layer, i, "geom_spatraster_contour()")
-  if (nrow(d) > 1L) {
-    stop(
-      "layer ", i, ": a multi-band SpatRaster is not supported",
-      call. = FALSE
-    )
-  }
-
-  computed <- built@data[[i]]
-  absent <- setdiff(c("x", "y", "group", "level", "lyr"), names(computed))
-  if (length(absent) > 0L) {
-    stop(
-      "layer ", i, ": unsupported geom_spatraster_contour() layer (the ",
-      "computed data has no `", absent[[1L]], "` column)",
-      call. = FALSE
-    )
-  }
-  if (nrow(computed) == 0L) {
-    stop(
-      "layer ", i, ": geom_spatraster_contour() produced no contour lines",
-      call. = FALSE
-    )
-  }
+  computed <- qgs_contour_computed(
+    built, layer, i, "geom_spatraster_contour()",
+    c("x", "y", "group", "level", "lyr"), "contour lines"
+  )
 
   # One feature per contour piece: the stat's `group` is unique per level
   # and per piece, and PANEL keeps a faceted plot's panels apart (like
-  # the data.frame layers do). First-appearance order keeps the features
-  # in the order the stat emits them.
-  key <- paste(computed$PANEL, computed$group)
-  key <- factor(key, levels = unique(key))
-  rows_by_line <- split(seq_len(nrow(computed)), key)
+  # the data.frame layers do).
+  rows_by_line <- qgs_contour_rows_by_group(computed)
   geoms <- lapply(rows_by_line, function(rows) {
     if (length(rows) < 2L) {
       stop(
@@ -100,6 +87,101 @@ qgs_contour_sf <- function(built, layer, i) {
     attrs,
     geometry = sf::st_sfc(geoms, crs = qgs_contour_crs(built))
   )
+}
+
+# The filled contour bands of a geom_spatraster_contour_filled() layer as
+# an sf object: one MULTIPOLYGON per band, with the band label (`level`,
+# e.g. "(70, 80]") and the band name (`lyr`) as attributes.
+qgs_contour_filled_sf <- function(built, layer, i) {
+  computed <- qgs_contour_computed(
+    built, layer, i, "geom_spatraster_contour_filled()",
+    c("x", "y", "group", "subgroup", "level", "lyr"), "contour bands"
+  )
+
+  # One feature per band: the stat emits one `group` per band, its
+  # `subgroup` numbering the band's rings.
+  rows_by_band <- qgs_contour_rows_by_group(computed)
+  geoms <- lapply(rows_by_band, function(rows) {
+    qgs_isoband_multipolygon(
+      computed$x[rows], computed$y[rows], computed$subgroup[rows], i
+    )
+  })
+
+  # `level` and `lyr` are constant within a band. The label is written as
+  # a string: it is the value the fill scale's categories match on.
+  first_rows <- unname(vapply(rows_by_band, `[[`, integer(1L), 1L))
+  attrs <- data.frame(
+    level = as.character(computed$level[first_rows]),
+    lyr = as.character(computed$lyr[first_rows]),
+    stringsAsFactors = FALSE
+  )
+  sf::st_sf(
+    attrs,
+    geometry = sf::st_sfc(geoms, crs = qgs_contour_crs(built))
+  )
+}
+
+# The computed data of a contour layer, checked to be something this file
+# can convert: a single band, the columns the conversion reads, and at
+# least one shape. `what` names the shapes in the "nothing to write"
+# error.
+qgs_contour_computed <- function(built, layer, i, geom, columns, what) {
+  d <- qgs_spatraster_data(layer, i, geom)
+  if (nrow(d) > 1L) {
+    stop(
+      "layer ", i, ": a multi-band SpatRaster is not supported",
+      call. = FALSE
+    )
+  }
+
+  computed <- built@data[[i]]
+  absent <- setdiff(columns, names(computed))
+  if (length(absent) > 0L) {
+    stop(
+      "layer ", i, ": unsupported ", geom, " layer (the computed data has ",
+      "no `", absent[[1L]], "` column)",
+      call. = FALSE
+    )
+  }
+  if (nrow(computed) == 0L) {
+    stop(
+      "layer ", i, ": ", geom, " produced no ", what,
+      call. = FALSE
+    )
+  }
+  computed
+}
+
+# The row indices of each shape the stat emitted, in the order it emitted
+# them (first appearance of the key): the stat's `group`, plus PANEL to
+# keep a faceted plot's panels apart, like the data.frame layers do.
+qgs_contour_rows_by_group <- function(computed) {
+  key <- paste(computed$PANEL, computed$group)
+  key <- factor(key, levels = unique(key))
+  split(seq_len(nrow(computed)), key)
+}
+
+# One band's rings as a MULTIPOLYGON. The rings are exactly what
+# isoband::isobands() produced for that band — the stat passes its `x`,
+# `y` and `id` on as `x`, `y` and `subgroup` — so they are handed back to
+# isoband, whose iso_to_sfg() is what applies the even-odd rule that
+# decides which ring is a hole of which polygon.
+#
+# The result can be an invalid simple feature (a self-touching ring),
+# which isobanding produces when a break sits exactly on data values. It
+# is written as it is: that is the shape ggplot2 draws, and
+# st_make_valid() would replace it with a different geometry.
+qgs_isoband_multipolygon <- function(x, y, id, i) {
+  band <- list(list(x = x, y = y, id = as.integer(id)))
+  class(band) <- "isobands"
+  geom <- isoband::iso_to_sfg(band)[[1L]]
+  if (!inherits(geom, "MULTIPOLYGON")) {
+    stop(
+      "layer ", i, ": a contour band did not convert to a MULTIPOLYGON",
+      call. = FALSE
+    )
+  }
+  geom
 }
 
 # The CRS the stat's x/y are in: the panel CRS, which is what
@@ -132,13 +214,46 @@ qgs_contour_style_attribute <- function(plot, layer, i) {
   if (is.null(quo)) {
     return(NULL)
   }
-  label <- rlang::as_label(quo)
-  if (!grepl("^(ggplot2::)?after_stat\\((\\.data\\$)?level\\)$", label)) {
+  qgs_check_contour_level_mapping(quo, "colour", "geom_spatraster_contour()", i)
+  list(aes = "colour", attribute = "level")
+}
+
+# The same for a geom_spatraster_contour_filled() layer, whose `fill`
+# always varies: the stat's own default_aes maps it to
+# `after_stat(level)`, the band label, which is written as an attribute of
+# the GeoPackage and drives a categorized renderer. A user `fill` mapping
+# has to be that same expression — the other computed values
+# (`level_mid`, `nlevel`, ...) are not written — and a `colour` mapping is
+# an error: a QGIS symbol varies one color, and here that is the fill.
+qgs_contour_filled_style_attribute <- function(plot, layer, i) {
+  colour <- layer$mapping[["colour"]] %||% plot@mapping[["colour"]]
+  if (!is.null(colour)) {
     stop(
-      "layer ", i, ": only `after_stat(level)` is supported for `colour` on ",
-      "a geom_spatraster_contour() layer, got `", label, "`",
+      "layer ", i, ": geom_spatraster_contour_filled() varies its `fill`, ",
+      "so a `colour` mapping is not supported",
       call. = FALSE
     )
   }
-  list(aes = "colour", attribute = "level")
+  quo <- layer$mapping[["fill"]] %||% plot@mapping[["fill"]]
+  if (!is.null(quo)) {
+    qgs_check_contour_level_mapping(
+      quo, "fill", "geom_spatraster_contour_filled()", i
+    )
+  }
+  list(aes = "fill", attribute = "level")
+}
+
+# `level` is the only computed value written as an attribute, so it is the
+# only expression an aesthetic may be mapped to. Anything else would be
+# silently mis-rendered, so it is an error rather than a guess.
+qgs_check_contour_level_mapping <- function(quo, aes_name, geom, i) {
+  label <- rlang::as_label(quo)
+  if (!grepl("^(ggplot2::)?after_stat\\((\\.data\\$)?level\\)$", label)) {
+    stop(
+      "layer ", i, ": only `after_stat(level)` is supported for `", aes_name,
+      "` on a ", geom, " layer, got `", label, "`",
+      call. = FALSE
+    )
+  }
+  invisible(NULL)
 }
