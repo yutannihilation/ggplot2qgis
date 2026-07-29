@@ -149,8 +149,15 @@ the color ggplot2 would have used.
 Following ggplot2's semantics for polygons, \code{fill} is the interior and
 \code{colour} is the border: a \code{colour} scale on a polygon layer colors the
 outlines while the interior keeps the constant fill. Constant outline
-colors and widths are taken from the plot as well. Mapping both \code{fill}
-and \code{colour} on the same layer is not supported.
+colors and widths are taken from the plot as well, as are the marker
+constants of a point layer (see \emph{Point symbols}) and \code{alpha} (see
+\emph{Opacity}). Mapping both \code{fill} and \code{colour} on the same layer is not
+supported.
+
+A constant \code{fill}/\code{colour} of \code{NA} renders as "not drawn", the way
+ggplot2 draws it: an unfilled polygon keeps its border, a \code{colour = NA}
+one loses it, and a layer left with nothing to draw at all (a polygon
+with neither color, a line without its own) is an error.
 
 Only a bare column name is supported for the \code{fill}/\code{colour} aesthetics;
 a constant or a computed expression (e.g. \code{aes(fill = AREA * 2)}) is an
@@ -170,6 +177,58 @@ or marker ring off; a blank line layer would draw nothing and is an
 error. A linetype that varies by feature (a mapped \code{linetype}/\code{lty})
 cannot be represented by these renderers: the symbols are drawn with
 solid lines, with a warning.
+}
+
+\section{Point symbols}{
+A point layer's \code{shape} becomes the QGIS marker of the same outline:
+pch 0/15/22 a \code{square}, 1/16/19/20/21 a \code{circle}, 5/18/23 a \code{diamond},
+2/17/24 an \code{equilateral_triangle} (6/25 the same, rotated 180 degrees),
+3 a \code{cross} and 4 a \code{cross2}; ggplot2's shape names (\code{"circle filled"}, ...) are those same symbols. The composite symbols
+(pch 7-14), R's thin asterisk (8), a single-character shape (which
+draws a text glyph) and tmap's grob shapes have no QGIS counterpart and
+are errors rather than a silently different marker.
+
+How R colors the shape decides where the layer's colors go: pch 0-6 are
+stroke-only, so the marker gets a transparent interior and its
+\code{colour}; pch 15-20 are filled with a single color (ggplot2's \code{colour},
+tmap's \code{fill}, see \emph{tmap symbol constants}) and get no distinct border;
+pch 21-25 fill with \code{fill} and stroke with \code{colour}. Mapping a color to
+the slot the shape does not draw is an error.
+
+The marker's size is the symbol's extent, which each package computes
+its own way: ggplot2 spans \code{size} millimeters plus two thirds of
+\code{stroke}, tmap a multiple of the text line height (see \emph{tmap symbol
+constants}). QGIS is then given the width the shape's ink actually
+spans — three quarters of that extent for a circle — so a default
+ggplot2 point (\code{size = 1.5}, \code{stroke = 0.5}, pch 19) is a 1.38 mm
+circle. Its ring is \code{stroke} wide in R's line-width units, i.e.
+0.25 mm by default; \code{linewidth}, which the point geoms do not have,
+plays no part.
+
+A \code{size}, \code{shape} or \code{stroke} that varies by feature (a mapped
+aesthetic) is drawn with the first feature's value, with a warning: the
+QGIS renderers vary the color and nothing else.
+}
+
+\section{Opacity}{
+A constant \code{alpha} (tmap: \code{fill_alpha} and \code{col_alpha}) becomes the
+alpha component of the colors it applies to, rather than QGIS's
+symbol-wide opacity — which could not render a translucent fill under
+an opaque border. Which colors it applies to is what the plotting
+package draws with it: ggplot2 gives a polygon's interior its \code{alpha}
+and leaves the border opaque, applies it to a line's own color, and to
+both colors of a point marker; tmap's two alphas belong to \code{fill} and
+\code{col} respectively. Like the other constants, an \code{alpha} that varies by
+feature is dropped down to the first feature's value, with a warning.
+
+An alpha of 0 means "not drawn", like an NA color, and a layer with
+nothing left to draw is an error. The classes of a graduated or
+categorized renderer carry the alpha too, as does the data-defined
+color expression of \code{gradient_style = "continuous"}, but the
+renderer's \verb{[source]} color ramp stays opaque: it is the palette rather
+than the rendering opacity, so re-classifying the layer in QGIS drops
+the transparency. An alpha a color carries itself
+(\code{colour = "#FF000080"}) is not carried over — only its RGB part is.
 }
 
 \section{Text and labels}{
@@ -208,10 +267,11 @@ the layer must use the identity stat and position.
 A point layer keeps every column of the data frame as attributes; a
 line/polygon layer keeps the columns that are constant within every
 group, one feature per group (a mapped \code{fill}/\code{colour} column must be
-constant within each group). \code{fill = NA}/\code{colour = NA} (including
-\code{geom_polygon()}'s default \code{colour}) render as "not drawn" in QGIS.
-The \code{size}, \code{shape} and \code{alpha} aesthetics are not carried over; those
-symbol properties keep the QGIS defaults.
+constant within each group). \code{geom_polygon()}'s default \code{colour} is
+\code{NA}, so such a layer is written without a border. A
+\code{geom_point()} layer's \code{size}, \code{shape}, \code{stroke} and \code{alpha} are
+carried over like a \code{geom_sf()} point layer's (see \emph{Point symbols}
+and \emph{Opacity}).
 
 The project opens zoomed to the plot's displayed range (the panel range,
 including the default expansion and any \code{\link[ggplot2:coord_sf]{ggplot2::coord_sf()}} \code{xlim}/
@@ -301,9 +361,10 @@ gradient with \code{gradient_style = "continuous"}.
 
 A layer maps either \code{fill} or \code{col} to a data column (not both). The
 constants tmap computed for the layer — \code{lwd}, \code{lty} (see \emph{Line
-types}), \code{size}, \code{shape}, \code{fill_alpha} and \code{col_alpha} — are carried
-over as described in \emph{tmap symbol constants}; a constant that varies
-between features is dropped down to its first value, with a warning.
+types}), \code{size} and \code{shape} (see \emph{Point symbols} and \emph{tmap symbol
+constants}), \code{fill_alpha} and \code{col_alpha} (see \emph{Opacity}) — are carried
+over; a constant that varies between features is dropped down to its
+first value, with a warning.
 Layers sharing one \code{\link[tmap:tm_shape]{tmap::tm_shape()}} share one GeoPackage: the data is
 written once and every layer of the shape references the same table.
 
@@ -344,35 +405,18 @@ API, so a tmap version older than 4.4 is rejected.
 }
 
 \section{tmap symbol constants}{
-A symbol layer's \code{size} is a multiple of the text line height, which is
-5.08 mm on an R device with the default 12 pt font — the QGIS marker
-size is that, times the fraction of it the shape's ink actually spans
-(3/4 for a circle), so a default \code{tm_symbols()} marker is 3.81 mm and a
+What \emph{Point symbols} leaves to each package is the symbol's extent:
+tmap's \code{size} is a multiple of the text line height, which is 5.08 mm
+on an R device with the default 12 pt font, so a default
+\code{tm_symbols()} marker is a 3.81 mm circle (three quarters of it) and a
 \code{tm_dots()} one 1.143 mm. A device opened with a different \code{pointsize}
 would draw tmap's symbols at a different physical size; the conversion
 assumes the default. [tmap::tm_layout()]'s \code{scale} is already part of
 the size tmap computes, so it carries over.
 
-\code{shape} becomes the QGIS marker of the same outline: pch 0/15/22 a
-\code{square}, 1/16/19/20/21 a \code{circle}, 5/18/23 a \code{diamond}, 2/17/24 an
-\code{equilateral_triangle} (6/25 the same, rotated 180 degrees), 3 a
-\code{cross} and 4 a \code{cross2}. The composite symbols (pch 7-14), R's thin
-asterisk (8) and tmap's grob shapes have no QGIS counterpart and are
-errors rather than a silently different marker. How R colors the shape
-decides where tmap's colors go: pch 0-6 are stroke-only, so the marker
-gets a transparent interior and its \code{col} outline; pch 15-20 are filled
-with a single color and get no distinct border; pch 21-25 fill with
-\code{fill} and stroke with \code{col}. Mapping a color to the slot the shape
-does not draw is an error.
-
-\code{fill_alpha} and \code{col_alpha} become the alpha component of the
-respective colors, so a translucent fill can sit under an opaque
-border — which QGIS's symbol-wide opacity could not express. An alpha
-of 0 means "not drawn", like an NA color, and a layer with nothing left
-to draw is an error. The colors of a graduated or categorized
-renderer's classes carry the alpha too, but the renderer's \verb{[source]}
-color ramp stays opaque: it is the palette rather than the rendering
-opacity, so re-classifying the layer in QGIS drops the transparency.
+tmap moves \code{col} into \code{fill} before drawing a pch 15-20 symbol (R fills
+those with \code{col}), so the single color of such a marker is tmap's
+\code{fill} — which is also why mapping \code{col} on one is an error.
 }
 
 \section{tmap raster layers}{
@@ -414,7 +458,6 @@ curvilinear, rotated or irregularly spaced grids are errors.
 [a, b)\verb{) while every QGIS classed renderer is right-closed (}(a, b]: R:a,\%20b)\%60)\%20while\%20every\%20QGIS\%20classed\%20renderer\%20is\%20right-closed\%0A(\%60(a,\%20b
 [tmap::tm_crs()]: R:tmap::tm_crs()
 [tmap::tm_layout()]: R:tmap::tm_layout()
-[source]: R:source
 \code{\link[tmap:tm_raster]{tmap::tm_raster()}}: R:tmap::tm_raster()
 \code{\link[tmap:tm_shape]{tmap::tm_shape()}}: R:tmap::tm_shape()
 \code{\link[tmap:tm_scale_intervals]{tmap::tm_scale_intervals()}}: R:tmap::tm_scale_intervals()

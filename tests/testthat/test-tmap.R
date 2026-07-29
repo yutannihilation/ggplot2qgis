@@ -1052,23 +1052,8 @@ test_that("the missing-value layer inherits the lty", {
 
 # --- symbol size, shape and alpha constants ---------------------------
 
-# The marker options of the first map layer's symbol (the project template
-# carries symbols of its own before the layers).
-marker_option <- function(out, name) {
-  # (?s) so the patterns span the pretty-printed XML's newlines.
-  layers <- sub("(?s).*?<maplayer", "<maplayer", out, perl = TRUE)
-  block <- regmatches(
-    layers,
-    regexpr('(?s)<layer class="SimpleMarker".*?</layer>', layers, perl = TRUE)
-  )
-  pattern <- paste0('<Option name="', name, '" type="QString" value="[^"]*"/>')
-  option <- regmatches(block, regexpr(pattern, block))
-  if (length(option) == 0L) {
-    return(NA_character_)
-  }
-  sub('.*value="([^"]*)"/>', "\\1", option)
-}
-
+# marker_option() (the marker options of the first map layer's symbol)
+# lives in helper.R, shared with the ggplot2-path tests.
 write_marker <- function(x, env = parent.frame()) {
   dir <- local_out_dir(env = env)
   path <- file.path(dir, "proj.qgs")
@@ -1320,7 +1305,7 @@ test_that("a constant that varies by feature warns and uses the first", {
 
   expect_warning(
     value <- qgs_tmap_constant(md, "size", 1L),
-    "a `size` that varies by feature"
+    "a varying `size`"
   )
   expect_equal(value, 2)
   expect_silent(qgs_tmap_constant(md, "fill_alpha", 1L))

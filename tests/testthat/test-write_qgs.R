@@ -351,7 +351,8 @@ test_that("no fill/colour mapping becomes a single style", {
   expect_match(out, 'type="singleSymbol"', fixed = TRUE)
   expect_no_match(out, "ramp_color", fixed = TRUE)
 
-  # geom_sf() constants: grey90 fill, grey35 border, linewidth 0.2 in mm.
+  # geom_sf() constants, as ggplot2 resolved them against the theme:
+  # grey90 fill, grey35 border, linewidth 0.2 in mm.
   expect_match(
     out,
     '<Option name="color" type="QString" value="229,229,229,255,rgb:',
@@ -366,6 +367,75 @@ test_that("no fill/colour mapping becomes a single style", {
     out,
     '<Option name="outline_width" type="QString" value="0.1505625"/>',
     fixed = TRUE
+  )
+})
+
+test_that("an NA color of an sf layer is not drawn", {
+  nc <- read_nc()
+  lines <- sf::st_cast(nc, "MULTILINESTRING", warn = FALSE)
+  dir <- local_out_dir()
+  written <- function(p, name) {
+    path <- file.path(dir, paste0(name, ".qgs"))
+    write_qgs(p, path)
+    read_qgs(path)
+  }
+
+  # An unfilled polygon keeps its border, and vice versa: ggplot2 >= 4.0
+  # resolves geom_sf()'s per-geometry defaults during the build, so NA
+  # here is the user's own "do not draw this", not a sentinel for them.
+  out <- written(ggplot2::ggplot(nc) + ggplot2::geom_sf(fill = NA), "unfilled")
+  expect_match(
+    out,
+    '<Option name="style" type="QString" value="no"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="outline_color" type="QString" value="89,89,89,255,rgb:',
+    fixed = TRUE
+  )
+
+  out <- written(
+    ggplot2::ggplot(nc) + ggplot2::geom_sf(colour = NA), "borderless"
+  )
+  expect_match(
+    out,
+    '<Option name="outline_style" type="QString" value="no"/>',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="color" type="QString" value="229,229,229,255,rgb:',
+    fixed = TRUE
+  )
+
+  # The constant border of a mapped fill can be dropped the same way.
+  out <- written(
+    ggplot2::ggplot(nc) +
+      ggplot2::geom_sf(ggplot2::aes(fill = AREA), colour = NA),
+    "mapped"
+  )
+  expect_match(
+    out,
+    '<Option name="outline_style" type="QString" value="no"/>',
+    fixed = TRUE
+  )
+
+  # With neither color there is nothing left of the layer; a line is only
+  # its stroke, so one NA is enough.
+  expect_error(
+    write_qgs(
+      ggplot2::ggplot(nc) + ggplot2::geom_sf(fill = NA, colour = NA),
+      file.path(dir, "nothing.qgs")
+    ),
+    "would not be drawn"
+  )
+  expect_error(
+    write_qgs(
+      ggplot2::ggplot(lines) + ggplot2::geom_sf(colour = NA),
+      file.path(dir, "invisible_lines.qgs")
+    ),
+    "would not be drawn"
   )
 })
 
@@ -1021,5 +1091,292 @@ test_that("a mix across geometry families is still an error", {
   expect_error(
     write_qgs(p, file.path(local_out_dir(), "mixed.qgs")),
     "unsupported geometry type GEOMETRY"
+  )
+})
+
+# --- point symbols and opacity ----------------------------------------
+
+read_sf_points <- function() {
+  sf::st_sf(
+    v = c(1, 2, 3),
+    f = c("a", "b", "b"),
+    geometry = sf::st_sfc(
+      sf::st_point(c(0, 0)), sf::st_point(c(1, 1)), sf::st_point(c(2, 0)),
+      crs = 4326L
+    )
+  )
+}
+
+write_marker_qgs <- function(p, env = parent.frame()) {
+  dir <- local_out_dir(env = env)
+  path <- file.path(dir, "proj.qgs")
+  write_qgs(p, path)
+  read_qgs(path)
+}
+
+test_that("ggplot2's point size and stroke become the marker size", {
+  pts <- read_sf_points()
+
+  # size 1.5 mm + 2/3 of stroke 0.5 = 1.8389583 mm of symbol extent, of
+  # which R's circle spans 3/4; the ring is stroke / 2 mm.
+  out <- write_marker_qgs(ggplot2::ggplot(pts) + ggplot2::geom_sf())
+  expect_equal(marker_option(out, "name"), "circle")
+  expect_equal(marker_option(out, "size"), "1.3792187")
+  expect_equal(marker_option(out, "outline_width"), "0.25")
+
+  # `size` alone: 4 mm of extent, 3/4 of it drawn, no ring at all.
+  out <- write_marker_qgs(
+    ggplot2::ggplot(pts) + ggplot2::geom_sf(size = 4, stroke = 0)
+  )
+  expect_equal(marker_option(out, "size"), "3.01125")
+  expect_equal(marker_option(out, "outline_width"), "0")
+
+  # `stroke` widens the symbol as well as its ring.
+  out <- write_marker_qgs(
+    ggplot2::ggplot(pts) + ggplot2::geom_sf(stroke = 2)
+  )
+  expect_equal(marker_option(out, "size"), "2.1292187")
+  expect_equal(marker_option(out, "outline_width"), "1")
+})
+
+test_that("ggplot2's shape becomes the QGIS marker", {
+  pts <- read_sf_points()
+  shaped <- function(shape, ...) {
+    write_marker_qgs(
+      ggplot2::ggplot(pts) + ggplot2::geom_sf(shape = shape, ...)
+    )
+  }
+
+  # A square is narrower than the circle of the same size (sqrt(pi / 4)),
+  # and the shape names are the same symbols as their pch.
+  out <- shaped(22)
+  expect_equal(marker_option(out, "name"), "square")
+  expect_equal(marker_option(out, "size"), "1.222305")
+  expect_equal(marker_option(shaped("square filled"), "size"), "1.222305")
+
+  expect_equal(marker_option(shaped(5), "name"), "diamond")
+  expect_equal(marker_option(shaped(3), "name"), "cross")
+  expect_equal(marker_option(shaped(4), "name"), "cross2")
+
+  # QGIS inscribes its equilateral triangle in the size circle, so the
+  # marker is wider than R's ink; pch 25 is the same triangle, rotated.
+  out <- shaped(25, fill = "red")
+  expect_equal(marker_option(out, "name"), "equilateral_triangle")
+  expect_equal(marker_option(out, "size"), "2.1448452")
+  expect_equal(marker_option(out, "angle"), "180")
+  expect_equal(marker_option(shaped(24, fill = "red"), "angle"), "0")
+})
+
+test_that("a shape QGIS cannot draw is an error", {
+  pts <- read_sf_points()
+  path <- file.path(local_out_dir(), "proj.qgs")
+
+  expect_error(
+    write_qgs(ggplot2::ggplot(pts) + ggplot2::geom_sf(shape = 7), path),
+    "unsupported symbol shape"
+  )
+  # A single character is R's "draw this glyph" shape.
+  expect_error(
+    write_qgs(ggplot2::ggplot(pts) + ggplot2::geom_sf(shape = "a"), path),
+    "draws a text glyph"
+  )
+  # An ambiguous shape name (both "triangle" variants match).
+  expect_error(
+    write_qgs(
+      ggplot2::ggplot(pts) + ggplot2::geom_sf(shape = "triangle d"), path
+    ),
+    "unsupported symbol shape"
+  )
+})
+
+test_that("the shape decides which color slot the marker draws", {
+  pts <- read_sf_points()
+
+  # pch 0-6 are stroke-only: QGIS has no "no fill" flag on a marker,
+  # hence a transparent interior.
+  out <- write_marker_qgs(
+    ggplot2::ggplot(pts) + ggplot2::geom_sf(shape = 1, colour = "red")
+  )
+  expect_match(marker_option(out, "color"), ",0,rgb:[0-9.,]+,0$")
+  expect_equal(marker_option(out, "outline_color"), "255,0,0,255,rgb:1,0,0,1")
+
+  # pch 15-20 are filled with `colour`, with no distinct border.
+  out <- write_marker_qgs(
+    ggplot2::ggplot(pts) + ggplot2::geom_sf(colour = "red")
+  )
+  expect_equal(marker_option(out, "color"), "255,0,0,255,rgb:1,0,0,1")
+  expect_equal(marker_option(out, "outline_color"), "255,0,0,255,rgb:1,0,0,1")
+
+  # pch 21-25 fill with `fill` and stroke with `colour`; ggplot2's default
+  # `fill` is NA, i.e. no interior.
+  out <- write_marker_qgs(
+    ggplot2::ggplot(pts) +
+      ggplot2::geom_sf(shape = 21, fill = "red", colour = "blue")
+  )
+  expect_equal(marker_option(out, "color"), "255,0,0,255,rgb:1,0,0,1")
+  expect_equal(marker_option(out, "outline_color"), "0,0,255,255,rgb:0,0,1,1")
+  out <- write_marker_qgs(
+    ggplot2::ggplot(pts) + ggplot2::geom_sf(shape = 21)
+  )
+  expect_match(marker_option(out, "color"), ",0,rgb:[0-9.,]+,0$")
+})
+
+test_that("a point layer's NA color is not drawn", {
+  pts <- read_sf_points()
+
+  # GeomSf resolves a point layer's colors from GeomPoint during the
+  # build, so NA is the user's own "do not draw", not a sentinel for
+  # geom_sf()'s polygon defaults.
+  expect_error(
+    write_qgs(
+      ggplot2::ggplot(pts) + ggplot2::geom_sf(colour = NA),
+      file.path(local_out_dir(), "proj.qgs")
+    ),
+    "would not be drawn"
+  )
+})
+
+test_that("a mapped colour drives the slot the shape draws", {
+  pts <- read_sf_points()
+
+  # A bordered marker strokes with `colour`: the varying color is the
+  # ring, and the interior keeps the constant fill.
+  out <- write_marker_qgs(
+    ggplot2::ggplot(pts) +
+      ggplot2::geom_sf(ggplot2::aes(colour = f), shape = 21, fill = "yellow")
+  )
+  expect_match(out, 'type="categorizedSymbol"', fixed = TRUE)
+  expect_equal(marker_option(out, "color"), "255,255,0,255,rgb:1,1,0,1")
+  expect_equal(marker_option(out, "outline_style"), "solid")
+
+  # A solid marker is filled with `colour`, so the varying color is its
+  # interior — and a QGIS symbol varies one color property, so nothing is
+  # left for the border.
+  out <- write_marker_qgs(
+    ggplot2::ggplot(pts) + ggplot2::geom_sf(ggplot2::aes(colour = f))
+  )
+  expect_equal(marker_option(out, "outline_style"), "no")
+
+  # A `fill` the shape does not draw would render something ggplot2 does
+  # not.
+  expect_error(
+    write_qgs(
+      ggplot2::ggplot(pts) + ggplot2::geom_sf(ggplot2::aes(fill = v)),
+      file.path(local_out_dir(), "proj.qgs")
+    ),
+    "does not draw it"
+  )
+})
+
+test_that("alpha rides along with the colors ggplot2 applies it to", {
+  nc <- read_nc()
+  pts <- read_sf_points()
+
+  # Polygons: the interior only, the border stays opaque.
+  out <- write_marker_qgs(ggplot2::ggplot(nc) + ggplot2::geom_sf(alpha = 0.4))
+  expect_match(
+    out,
+    '<Option name="color" type="QString" value="229,229,229,102,rgb:',
+    fixed = TRUE
+  )
+  expect_match(
+    out,
+    '<Option name="outline_color" type="QString" value="89,89,89,255,rgb:',
+    fixed = TRUE
+  )
+
+  # Lines: the line's own color.
+  lines <- sf::st_cast(nc, "MULTILINESTRING", warn = FALSE)
+  out <- write_marker_qgs(
+    ggplot2::ggplot(lines) + ggplot2::geom_sf(alpha = 0.4)
+  )
+  expect_match(
+    out,
+    '<Option name="line_color" type="QString" value="0,0,0,102,rgb:',
+    fixed = TRUE
+  )
+
+  # Points: both colors of the marker.
+  out <- write_marker_qgs(ggplot2::ggplot(pts) + ggplot2::geom_sf(alpha = 0.4))
+  expect_equal(marker_option(out, "color"), "0,0,0,102,rgb:0,0,0,0.4")
+  expect_equal(marker_option(out, "outline_color"), "0,0,0,102,rgb:0,0,0,0.4")
+})
+
+test_that("the classes of a graduated style carry the alpha", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf(ggplot2::aes(fill = AREA), alpha = 0.4)
+
+  out <- write_marker_qgs(p)
+  # The class colors all do, not just the first.
+  expect_no_match(
+    out,
+    '<Option name="color" type="QString" value="[0-9,]+,255,rgb:'
+  )
+
+  # So does the data-defined expression of a continuous gradient.
+  dir <- local_out_dir()
+  path <- file.path(dir, "continuous.qgs")
+  write_qgs(p, path, gradient_style = "continuous")
+  out <- read_qgs(path)
+  expect_match(out, "set_color_part(ramp_color(", fixed = TRUE)
+  expect_match(out, ",'alpha',102)", fixed = TRUE)
+})
+
+test_that("an alpha of 0 means the slot is not drawn", {
+  nc <- read_nc()
+  pts <- read_sf_points()
+
+  out <- write_marker_qgs(ggplot2::ggplot(nc) + ggplot2::geom_sf(alpha = 0))
+  expect_match(
+    out,
+    '<Option name="style" type="QString" value="no"/>',
+    fixed = TRUE
+  )
+
+  # A marker has only the one color, so nothing is left of the layer.
+  expect_error(
+    write_qgs(
+      ggplot2::ggplot(pts) + ggplot2::geom_sf(alpha = 0),
+      file.path(local_out_dir(), "proj.qgs")
+    ),
+    "would not be drawn"
+  )
+})
+
+test_that("a marker constant that varies by feature warns", {
+  pts <- read_sf_points()
+  dir <- local_out_dir()
+
+  expect_warning(
+    write_qgs(
+      ggplot2::ggplot(pts) + ggplot2::geom_sf(ggplot2::aes(shape = f)),
+      file.path(dir, "shape.qgs")
+    ),
+    "a varying `shape`"
+  )
+  expect_warning(
+    write_qgs(
+      ggplot2::ggplot(pts) + ggplot2::geom_sf(ggplot2::aes(alpha = v)),
+      file.path(dir, "alpha.qgs")
+    ),
+    "a varying `alpha`"
+  )
+
+  # The first feature's value is what gets drawn: pch 16 for the factor's
+  # first level.
+  expect_equal(
+    marker_option(read_qgs(file.path(dir, "shape.qgs")), "name"),
+    "circle"
+  )
+
+  # A marker constant is only read where it is drawn, so an aesthetic
+  # ggplot2 itself ignores does not warn.
+  nc <- read_nc()
+  expect_no_warning(
+    write_qgs(
+      ggplot2::ggplot(nc) + ggplot2::geom_sf(ggplot2::aes(size = AREA)),
+      file.path(dir, "polygon_size.qgs")
+    )
   )
 })

@@ -251,7 +251,7 @@ style_set_linetype <- function(style, linetype) {
 # "cross2"), its size in millimeters and its rotation in degrees. QGIS
 # sizes a marker by its width, except `equilateral_triangle`, which is
 # inscribed in the circle of that diameter — the caller converts (see
-# QGS_TMAP_PCH in tmap.R). Ignored by the line and polygon symbols.
+# QGS_PCH in marker.R). Ignored by the line and polygon symbols.
 style_set_marker <- function(style, name, size, angle = 0) {
   if (size <= 0) {
     stop("marker size must be positive, got ", num(size), call. = FALSE)

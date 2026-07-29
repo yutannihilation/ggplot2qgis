@@ -13,10 +13,6 @@
 # structure mismatches are made to fail loudly rather than guessed around.
 # See .tmp/research/20260724_tmap_support.md for the verified structures.
 
-# Millimeters per lwd unit: tmap line widths are grid/base-R lwd, where
-# 1 lwd is 1/96 inch.
-QGS_MM_PER_LWD <- 25.4 / 96
-
 # Millimeters per unit of tmap's symbol `size`: tmap draws symbols with
 # pointsGrob(size = unit(size, "lines")), and a line is the device's
 # fontsize times its lineheight — 12 pt x 1.2 on every R default device,
@@ -24,76 +20,6 @@ QGS_MM_PER_LWD <- 25.4 / 96
 # device opened with a different pointsize would draw tmap's symbols at a
 # different physical size; the conversion assumes the default.
 QGS_MM_PER_LINE <- 25.4 * 12 * 1.2 / 72
-
-# The QGIS marker each R plotting symbol becomes.
-#
-# `factor` turns one unit of tmap's `size` into the QGIS marker size:
-# R draws a pch spanning `2 * RADIUS * <shape constant>` size units wide
-# (grDevices' engine.c), and QGIS sizes a marker by its width — except
-# `equilateral_triangle`, which is inscribed in the circle of that
-# diameter and so comes out sqrt(3)/2 as wide, which the factor
-# compensates for. Both sets of numbers were checked by rendering the
-# symbols and measuring the ink (see
-# .tmp/research/20260729_tmap_symbol_constants.md).
-#
-# `band` is how R colors the symbol, which decides where tmap's `fill`
-# and `col` go: "open" shapes are stroke-only, "solid" ones are filled
-# with what tmap put in `fill` (tmap's swap_pch_15_20() already swapped
-# it there) and have no distinct border, "bordered" ones fill with `fill`
-# and stroke with `col`.
-#
-# The composite pch (7-14) and R's thin asterisk (8) have no QGIS
-# counterpart, and neither do tmap's grob shapes (> 999); they are
-# errors rather than a silently different marker.
-QGS_TMAP_PCH <- local({
-  radius <- 0.375 # engine.c RADIUS
-  sqrc <- 0.88623 # sqrt(pi / 4)
-  dmd <- 1.25331 # sqrt(pi / 4) * sqrt(2)
-  trc1 <- 1.34677 # half-width of the triangles
-  tri <- sqrt(3) / 2 # QGIS's equilateral_triangle width per size
-  spec <- list(
-    list(pch = 0, name = "square", factor = 2 * radius, band = "open"),
-    list(pch = 15, name = "square", factor = 2 * radius, band = "solid"),
-    list(pch = 22, name = "square", factor = 2 * radius * sqrc,
-         band = "bordered"),
-    list(pch = 1, name = "circle", factor = 2 * radius, band = "open"),
-    list(pch = c(16, 19), name = "circle", factor = 2 * radius,
-         band = "solid"),
-    list(pch = 20, name = "circle", factor = 2 * radius * 2 / 3,
-         band = "solid"),
-    list(pch = 21, name = "circle", factor = 2 * radius, band = "bordered"),
-    list(pch = 5, name = "diamond", factor = 2 * radius * sqrt(2),
-         band = "open"),
-    list(pch = 18, name = "diamond", factor = 2 * radius, band = "solid"),
-    list(pch = 23, name = "diamond", factor = 2 * radius * dmd,
-         band = "bordered"),
-    list(pch = 2, name = "equilateral_triangle",
-         factor = 2 * radius * trc1 / tri, band = "open"),
-    list(pch = 6, name = "equilateral_triangle",
-         factor = 2 * radius * trc1 / tri, band = "open", angle = 180),
-    list(pch = 17, name = "equilateral_triangle",
-         factor = 2 * radius * trc1 / tri, band = "solid"),
-    list(pch = 24, name = "equilateral_triangle",
-         factor = 2 * radius * trc1 / tri, band = "bordered"),
-    list(pch = 25, name = "equilateral_triangle",
-         factor = 2 * radius * trc1 / tri, band = "bordered", angle = 180),
-    list(pch = 3, name = "cross", factor = 2 * radius * sqrt(2),
-         band = "open"),
-    list(pch = 4, name = "cross2", factor = 2 * radius, band = "open")
-  )
-  out <- list()
-  for (s in spec) {
-    for (pch in s$pch) {
-      out[[as.character(pch)]] <- list(
-        name = s$name,
-        factor = s$factor,
-        band = s$band,
-        angle = s$angle %||% 0
-      )
-    }
-  }
-  out
-})
 
 # The lowest tmap version whose internals this module was verified
 # against.
@@ -529,7 +455,7 @@ qgs_tmap_layer_spec <- function(built, d, tms, lyr, tml, i, gradient_style,
     )
   }
   # Which constant color reaches which slot of the symbol, and at what
-  # opacity: a marker's answer depends on its shape (see QGS_TMAP_PCH).
+  # opacity: a marker's answer depends on its shape (see QGS_PCH).
   slots <- qgs_tmap_color_slots(kind, md, marker, color_aes, i)
   fill_const <- slots$fill
   col_const <- slots$col
@@ -537,8 +463,8 @@ qgs_tmap_layer_spec <- function(built, d, tms, lyr, tml, i, gradient_style,
   subset <- NULL
   na <- NULL
   if (length(color_aes) == 0L) {
-    style <- qgs_tmap_single_style(
-      kind, fill_const, col_const, outline_width, i
+    style <- qgs_single_style(
+      geometry, fill_const, col_const, outline_width, i
     )
   } else {
     attribute <- qgs_tmap_attribute(tml, color_aes, d, i)
@@ -559,9 +485,9 @@ qgs_tmap_layer_spec <- function(built, d, tms, lyr, tml, i, gradient_style,
       )
       if (!is.null(na_color)) {
         na <- list(
-          style = qgs_tmap_apply_constants(
-            qgs_tmap_single_style(
-              kind,
+          style = qgs_apply_constants(
+            qgs_single_style(
+              geometry,
               if (color_aes == "fill") na_color else fill_const,
               if (color_aes == "col") na_color else col_const,
               outline_width,
@@ -586,21 +512,10 @@ qgs_tmap_layer_spec <- function(built, d, tms, lyr, tml, i, gradient_style,
     data = d,
     name = tms$shp_name,
     geometry = geometry,
-    style = qgs_tmap_apply_constants(style, linetype, marker, slots),
+    style = qgs_apply_constants(style, linetype, marker, slots),
     subset = subset,
     na = na
   )
-}
-
-# The layer's constant visual values, applied to a style the same way for
-# the layer itself and for its missing-value companion (ADR 0002).
-qgs_tmap_apply_constants <- function(style, linetype, marker, slots) {
-  style <- style_set_linetype(style, linetype)
-  style <- style_set_alpha(style, slots$fill_alpha, slots$stroke_alpha)
-  if (!is.null(marker)) {
-    style <- style_set_marker(style, marker$name, marker$size, marker$angle)
-  }
-  style
 }
 
 # The value tmap computed for the layer's first feature, or NULL when the
@@ -609,60 +524,22 @@ qgs_tmap_first <- function(md, name) {
   if (name %in% names(md)) md[[name]][[1L]] else NULL
 }
 
-# Same, for a column that has to be uniform: the renderers vary the color
-# and nothing else, so a vector constant (`lwd = c(1, 2)`) loses all but
-# its first value, with a warning. A mapped aesthetic varies by design
-# and never reaches this — only `fill`/`col` can be mapped, and both are
-# read with qgs_tmap_first().
+# Same, for a column that has to be uniform (see qgs_constant()). A mapped
+# aesthetic varies by design and never reaches this — only `fill`/`col`
+# can be mapped, and both are read with qgs_tmap_first().
 qgs_tmap_constant <- function(md, name, i) {
-  values <- md[[name]]
-  if (length(values) == 0L) {
-    return(NULL)
-  }
-  if (length(unique(values)) > 1L) {
-    warning(
-      "layer ", i, ": a `", name, "` that varies by feature is not ",
-      "supported; the first value is used for every feature",
-      call. = FALSE
-    )
-  }
-  values[[1L]]
+  qgs_constant(md[[name]], name, i)
 }
 
-# The QGIS marker drawing tmap's `shape` at tmap's `size`:
-# list(name, size, angle, band). A shape or size tmap itself would not
-# draw (NA) means an empty layer, which is an error like an all-NA color.
+# The QGIS marker drawing tmap's `shape` at tmap's `size`, which is a
+# multiple of the text line height (see QGS_MM_PER_LINE).
 qgs_tmap_marker <- function(shape, size, i) {
-  size <- size %||% 1
-  shape <- shape %||% 21
-  if (is.na(shape) || is.na(size) || size <= 0) {
-    stop(
-      "layer ", i, ": the layer would not be drawn (`",
-      if (is.na(shape)) "shape" else "size", "` is ",
-      if (is.na(size) || is.na(shape)) "NA" else num(size), ")",
-      call. = FALSE
-    )
-  }
-  pch <- QGS_TMAP_PCH[[as.character(shape)]]
-  if (is.null(pch)) {
-    stop(
-      "layer ", i, ": unsupported symbol shape (", num(shape),
-      "); QGIS has no marker drawing it",
-      call. = FALSE
-    )
-  }
-  list(
-    name = pch$name,
-    # Rounded so binary float noise stays out of the project file.
-    size = round(size * QGS_MM_PER_LINE * pch$factor, 7),
-    angle = pch$angle,
-    band = pch$band
-  )
+  qgs_marker(shape %||% 21, (size %||% 1) * QGS_MM_PER_LINE, i)
 }
 
 # Where a layer's constant `fill`/`col` go, and how opaque each slot is.
 # Polygons and lines are straightforward; a marker depends on how R
-# colors its shape (QGS_TMAP_PCH$band): an "open" pch has no interior and
+# colors its shape (QGS_PCH$band): an "open" pch has no interior and
 # is stroked with `col`, a "solid" one is filled with `fill` and has no
 # distinct border — so a color mapped to the slot R ignores would render
 # something tmap does not draw, which is an error. An alpha of 0 makes
@@ -670,8 +547,8 @@ qgs_tmap_marker <- function(shape, size, i) {
 qgs_tmap_color_slots <- function(kind, md, marker, color_aes, i) {
   fill <- qgs_tmap_first(md, "fill")
   col <- qgs_tmap_first(md, "col")
-  fill_alpha <- qgs_tmap_alpha(qgs_tmap_constant(md, "fill_alpha", i))
-  stroke_alpha <- qgs_tmap_alpha(qgs_tmap_constant(md, "col_alpha", i))
+  fill_alpha <- qgs_alpha(qgs_tmap_constant(md, "fill_alpha", i))
+  stroke_alpha <- qgs_alpha(qgs_tmap_constant(md, "col_alpha", i))
   if (kind == "symbols") {
     band <- marker$band
     ignored <- switch(band, open = "fill", solid = "col", NULL)
@@ -706,15 +583,6 @@ qgs_tmap_color_slots <- function(kind, md, marker, color_aes, i) {
     fill_alpha = fill_alpha,
     stroke_alpha = stroke_alpha
   )
-}
-
-# tmap's 0..1 alpha as QGIS's 0..255. NA is tmap's "no alpha given",
-# which draws the color as it is.
-qgs_tmap_alpha <- function(alpha) {
-  if (is.null(alpha) || is.na(alpha)) {
-    return(QGS_OPAQUE)
-  }
-  as.integer(round(alpha * 255))
 }
 
 # The color tmap mapped the layer's NA features to, as a color string —
@@ -768,27 +636,6 @@ qgs_tmap_layer_legends <- function(built, lyr) {
   lapply(lyr$mapping_legend, function(ref) {
     built$legs[[ref$legnr[[1L]]]]
   })
-}
-
-# A layer without a mapped color: tmap's constant colors, already routed
-# to their slots by qgs_tmap_color_slots(). `fill` is the interior
-# (polygons, symbols), `col` the outline (or the line color). NULL means
-# "not drawn" — an NA color, or an alpha of 0 — which every slot but a
-# line's own color can express.
-qgs_tmap_single_style <- function(kind, fill_const, col_const,
-                                  outline_width, i) {
-  main <- if (kind == "lines") col_const else fill_const
-  main_rgb <- qgs_rgb(main)
-  col_rgb <- qgs_rgb(col_const)
-  # A line is only its stroke, so it needs the one color; a polygon and a
-  # marker are still drawn by their outline alone (R's open pch are).
-  if (is.null(main_rgb) && (kind == "lines" || is.null(col_rgb))) {
-    stop(
-      "layer ", i, ": the layer would not be drawn (the colors are NA)",
-      call. = FALSE
-    )
-  }
-  style_set_outline(style_single(main_rgb), col_rgb, outline_width)
 }
 
 # A layer with a mapped fill/col: resolve the trained scale into a style

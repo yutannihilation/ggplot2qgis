@@ -10,9 +10,25 @@ QGS_GRADUATED_CLASSES <- 25L
 # space, so sample densely enough that the difference is invisible.
 QGS_GRADIENT_STOPS <- 21L
 
+# Millimeters per lwd unit: an R line width of 1 is 1/96 inch.
+QGS_MM_PER_LWD <- 25.4 / 96
+
 # Millimeters per ggplot2 linewidth unit: 1 linewidth is .pt (72.27 / 25.4)
 # lwd units of 1/96 inch each, i.e. 72.27 / 96 mm.
 QGS_MM_PER_LINEWIDTH <- 72.27 / 96
+
+# The size of a ggplot2 point symbol, in millimeters per unit of `size`
+# and per unit of `stroke`. Both geoms draw the symbol with pointsGrob()
+# at its default size of one "char", i.e. the gpar fontsize, which
+# gg_par() sets to `size * .pt + stroke * .stroke / 2` points
+# (.pt = 72.27 / 25.4, .stroke = 96 / 25.4). A grid point is 1/72 inch,
+# which makes the two contributions 72.27/72 mm and exactly 2/3 mm.
+QGS_MM_PER_POINT_SIZE <- 25.4 / 72 * (72.27 / 25.4)
+QGS_MM_PER_POINT_STROKE <- 25.4 / 72 * (96 / 25.4) / 2
+
+# The lwd a ggplot2 point symbol's ring is drawn at, per unit of `stroke`
+# (gg_par()'s `.stroke / 2`). No point geom has a `linewidth`.
+QGS_LWD_PER_STROKE <- (96 / 25.4) / 2
 
 # Characters a layer name cannot contain: the name becomes the GeoPackage
 # file name (so path separators and the characters Windows forbids in file
@@ -70,8 +86,15 @@ QGS_BASEMAPS <- list(
 #' Following ggplot2's semantics for polygons, `fill` is the interior and
 #' `colour` is the border: a `colour` scale on a polygon layer colors the
 #' outlines while the interior keeps the constant fill. Constant outline
-#' colors and widths are taken from the plot as well. Mapping both `fill`
-#' and `colour` on the same layer is not supported.
+#' colors and widths are taken from the plot as well, as are the marker
+#' constants of a point layer (see *Point symbols*) and `alpha` (see
+#' *Opacity*). Mapping both `fill` and `colour` on the same layer is not
+#' supported.
+#'
+#' A constant `fill`/`colour` of `NA` renders as "not drawn", the way
+#' ggplot2 draws it: an unfilled polygon keeps its border, a `colour = NA`
+#' one loses it, and a layer left with nothing to draw at all (a polygon
+#' with neither color, a line without its own) is an error.
 #'
 #' Only a bare column name is supported for the `fill`/`colour` aesthetics;
 #' a constant or a computed expression (e.g. `aes(fill = AREA * 2)`) is an
@@ -92,6 +115,59 @@ QGS_BASEMAPS <- list(
 #' error. A linetype that varies by feature (a mapped `linetype`/`lty`)
 #' cannot be represented by these renderers: the symbols are drawn with
 #' solid lines, with a warning.
+#'
+#' # Point symbols
+#'
+#' A point layer's `shape` becomes the QGIS marker of the same outline:
+#' pch 0/15/22 a `square`, 1/16/19/20/21 a `circle`, 5/18/23 a `diamond`,
+#' 2/17/24 an `equilateral_triangle` (6/25 the same, rotated 180 degrees),
+#' 3 a `cross` and 4 a `cross2`; ggplot2's shape names (`"circle
+#' filled"`, ...) are those same symbols. The composite symbols
+#' (pch 7-14), R's thin asterisk (8), a single-character shape (which
+#' draws a text glyph) and tmap's grob shapes have no QGIS counterpart and
+#' are errors rather than a silently different marker.
+#'
+#' How R colors the shape decides where the layer's colors go: pch 0-6 are
+#' stroke-only, so the marker gets a transparent interior and its
+#' `colour`; pch 15-20 are filled with a single color (ggplot2's `colour`,
+#' tmap's `fill`, see *tmap symbol constants*) and get no distinct border;
+#' pch 21-25 fill with `fill` and stroke with `colour`. Mapping a color to
+#' the slot the shape does not draw is an error.
+#'
+#' The marker's size is the symbol's extent, which each package computes
+#' its own way: ggplot2 spans `size` millimeters plus two thirds of
+#' `stroke`, tmap a multiple of the text line height (see *tmap symbol
+#' constants*). QGIS is then given the width the shape's ink actually
+#' spans — three quarters of that extent for a circle — so a default
+#' ggplot2 point (`size = 1.5`, `stroke = 0.5`, pch 19) is a 1.38 mm
+#' circle. Its ring is `stroke` wide in R's line-width units, i.e.
+#' 0.25 mm by default; `linewidth`, which the point geoms do not have,
+#' plays no part.
+#'
+#' A `size`, `shape` or `stroke` that varies by feature (a mapped
+#' aesthetic) is drawn with the first feature's value, with a warning: the
+#' QGIS renderers vary the color and nothing else.
+#'
+#' # Opacity
+#'
+#' A constant `alpha` (tmap: `fill_alpha` and `col_alpha`) becomes the
+#' alpha component of the colors it applies to, rather than QGIS's
+#' symbol-wide opacity — which could not render a translucent fill under
+#' an opaque border. Which colors it applies to is what the plotting
+#' package draws with it: ggplot2 gives a polygon's interior its `alpha`
+#' and leaves the border opaque, applies it to a line's own color, and to
+#' both colors of a point marker; tmap's two alphas belong to `fill` and
+#' `col` respectively. Like the other constants, an `alpha` that varies by
+#' feature is dropped down to the first feature's value, with a warning.
+#'
+#' An alpha of 0 means "not drawn", like an NA color, and a layer with
+#' nothing left to draw is an error. The classes of a graduated or
+#' categorized renderer carry the alpha too, as does the data-defined
+#' color expression of `gradient_style = "continuous"`, but the
+#' renderer's `[source]` color ramp stays opaque: it is the palette rather
+#' than the rendering opacity, so re-classifying the layer in QGIS drops
+#' the transparency. An alpha a color carries itself
+#' (`colour = "#FF000080"`) is not carried over — only its RGB part is.
 #'
 #' # Text and labels
 #'
@@ -130,10 +206,11 @@ QGS_BASEMAPS <- list(
 #' A point layer keeps every column of the data frame as attributes; a
 #' line/polygon layer keeps the columns that are constant within every
 #' group, one feature per group (a mapped `fill`/`colour` column must be
-#' constant within each group). `fill = NA`/`colour = NA` (including
-#' `geom_polygon()`'s default `colour`) render as "not drawn" in QGIS.
-#' The `size`, `shape` and `alpha` aesthetics are not carried over; those
-#' symbol properties keep the QGIS defaults.
+#' constant within each group). `geom_polygon()`'s default `colour` is
+#' `NA`, so such a layer is written without a border. A
+#' `geom_point()` layer's `size`, `shape`, `stroke` and `alpha` are
+#' carried over like a `geom_sf()` point layer's (see *Point symbols*
+#' and *Opacity*).
 #'
 #' The project opens zoomed to the plot's displayed range (the panel range,
 #' including the default expansion and any [ggplot2::coord_sf()] `xlim`/
@@ -222,9 +299,10 @@ QGS_BASEMAPS <- list(
 #'
 #' A layer maps either `fill` or `col` to a data column (not both). The
 #' constants tmap computed for the layer — `lwd`, `lty` (see *Line
-#' types*), `size`, `shape`, `fill_alpha` and `col_alpha` — are carried
-#' over as described in *tmap symbol constants*; a constant that varies
-#' between features is dropped down to its first value, with a warning.
+#' types*), `size` and `shape` (see *Point symbols* and *tmap symbol
+#' constants*), `fill_alpha` and `col_alpha` (see *Opacity*) — are carried
+#' over; a constant that varies between features is dropped down to its
+#' first value, with a warning.
 #' Layers sharing one [tmap::tm_shape()] share one GeoPackage: the data is
 #' written once and every layer of the shape references the same table.
 #'
@@ -265,35 +343,18 @@ QGS_BASEMAPS <- list(
 #'
 #' # tmap symbol constants
 #'
-#' A symbol layer's `size` is a multiple of the text line height, which is
-#' 5.08 mm on an R device with the default 12 pt font — the QGIS marker
-#' size is that, times the fraction of it the shape's ink actually spans
-#' (3/4 for a circle), so a default `tm_symbols()` marker is 3.81 mm and a
+#' What *Point symbols* leaves to each package is the symbol's extent:
+#' tmap's `size` is a multiple of the text line height, which is 5.08 mm
+#' on an R device with the default 12 pt font, so a default
+#' `tm_symbols()` marker is a 3.81 mm circle (three quarters of it) and a
 #' `tm_dots()` one 1.143 mm. A device opened with a different `pointsize`
 #' would draw tmap's symbols at a different physical size; the conversion
 #' assumes the default. [tmap::tm_layout()]'s `scale` is already part of
 #' the size tmap computes, so it carries over.
 #'
-#' `shape` becomes the QGIS marker of the same outline: pch 0/15/22 a
-#' `square`, 1/16/19/20/21 a `circle`, 5/18/23 a `diamond`, 2/17/24 an
-#' `equilateral_triangle` (6/25 the same, rotated 180 degrees), 3 a
-#' `cross` and 4 a `cross2`. The composite symbols (pch 7-14), R's thin
-#' asterisk (8) and tmap's grob shapes have no QGIS counterpart and are
-#' errors rather than a silently different marker. How R colors the shape
-#' decides where tmap's colors go: pch 0-6 are stroke-only, so the marker
-#' gets a transparent interior and its `col` outline; pch 15-20 are filled
-#' with a single color and get no distinct border; pch 21-25 fill with
-#' `fill` and stroke with `col`. Mapping a color to the slot the shape
-#' does not draw is an error.
-#'
-#' `fill_alpha` and `col_alpha` become the alpha component of the
-#' respective colors, so a translucent fill can sit under an opaque
-#' border — which QGIS's symbol-wide opacity could not express. An alpha
-#' of 0 means "not drawn", like an NA color, and a layer with nothing left
-#' to draw is an error. The colors of a graduated or categorized
-#' renderer's classes carry the alpha too, but the renderer's `[source]`
-#' color ramp stays opaque: it is the palette rather than the rendering
-#' opacity, so re-classifying the layer in QGIS drops the transparency.
+#' tmap moves `col` into `fill` before drawing a pch 15-20 symbol (R fills
+#' those with `col`), so the single color of such a marker is tmap's
+#' `fill` — which is also why mapping `col` on one is an error.
 #'
 #' # tmap raster layers
 #'
@@ -593,9 +654,7 @@ write_qgs.ggplot <- function(plot, path, use_plot_crs = FALSE,
       if (is_text) {
         style_none()
       } else {
-        qgs_vector_style(
-          plot, built, layer, i, d, gradient_style, geometry, sf_data
-        )
+        qgs_vector_style(plot, built, layer, i, d, gradient_style, geometry)
       },
       label = label
     )
@@ -1045,17 +1104,26 @@ qgs_style_attribute <- function(plot, layer, i, d) {
   list(aes = aes_name, attribute = attribute)
 }
 
-# Resolves the aesthetics of a layer into the matching style. `sf_data`
-# says whether the layer was sf originally (see qgs_layer_constants()).
+# Resolves the aesthetics of a layer into the matching style.
 qgs_vector_style <- function(plot, built, layer, i, d, gradient_style,
-                             geometry, sf_data) {
+                             geometry) {
   mapped <- qgs_style_attribute(plot, layer, i, d)
 
-  const <- qgs_layer_constants(built@data[[i]], sf_defaults = sf_data, i)
+  const <- qgs_layer_constants(built@data[[i]], geometry, i)
+  is_point <- geometry == "Point"
+
+  marker <- if (is_point) qgs_point_marker(const, i)
   # Rounded so binary float noise (0.15056250000000002) stays out of the
   # project file.
-  outline_width <- round(const$linewidth * QGS_MM_PER_LINEWIDTH, 7)
-  is_polygon <- geometry == "Polygon"
+  outline_width <- round(
+    if (is_point) {
+      # The ring around a marker is ggplot2's `stroke`, not `linewidth`.
+      const$stroke * QGS_LWD_PER_STROKE * QGS_MM_PER_LWD
+    } else {
+      const$linewidth * QGS_MM_PER_LINEWIDTH
+    },
+    7
+  )
 
   linetype <- qgs_linetype(const$linetype, i)
   if (geometry == "LineString" && identical(linetype, "no")) {
@@ -1065,10 +1133,14 @@ qgs_vector_style <- function(plot, built, layer, i, d, gradient_style,
     )
   }
 
+  # Which constant color reaches which slot of the symbol, and at what
+  # opacity: a marker's answer depends on its shape (see QGS_PCH).
+  slots <- qgs_color_slots(geometry, const, marker, mapped$aes, i)
+
   if (is.null(mapped)) {
-    return(style_set_linetype(
-      qgs_single_style(const, is_polygon, outline_width, i),
-      linetype
+    return(qgs_apply_constants(
+      qgs_single_style(geometry, slots$fill, slots$col, outline_width, i),
+      linetype, marker, slots
     ))
   }
   aes_name <- mapped$aes
@@ -1097,52 +1169,172 @@ qgs_vector_style <- function(plot, built, layer, i, d, gradient_style,
     qgs_graduated_style(scale, attribute, i)
   }
 
-  if (aes_name == "fill") {
-    # A constant border around the varying fill.
-    style <- style_set_outline(style, qgs_rgb(const$colour), outline_width)
-  } else if (is_polygon) {
-    # ggplot2 draws a colour aesthetic on polygons as the border color;
-    # the interior keeps the constant fill. The outline color is ignored
-    # for a stroke target, only its width applies.
-    style <- style_set_stroke_target(style, qgs_rgb(const$fill))
-    style <- style_set_outline(style, qgs_rgb(const$fill), outline_width)
+  if (aes_name == "fill" || (is_point && marker$band == "solid")) {
+    # The varying color is the interior — a polygon's fill, or the single
+    # color R fills a pch 15-20 marker with, which leaves that marker no
+    # border at all (qgs_color_slots() dropped its color) — with the
+    # constant stroke around it.
+    style <- style_set_outline(style, qgs_rgb(slots$col), outline_width)
   } else if (geometry == "LineString") {
     # The line color is the varying one; only the width is constant.
-    style <- style_set_outline(style, qgs_rgb(const$fill), outline_width)
+    style <- style_set_outline(style, qgs_rgb(slots$fill), outline_width)
+  } else {
+    # ggplot2 draws a colour aesthetic on polygons as the border color and
+    # on a marker as the ring around it; the interior keeps the constant
+    # fill (which an open marker does not draw at all). The outline color
+    # is ignored for a stroke target, only its width applies.
+    style <- style_set_stroke_target(style, qgs_rgb(slots$fill))
+    style <- style_set_outline(style, qgs_rgb(slots$fill), outline_width)
   }
-  # Points with a varying colour keep the QGIS marker defaults for the
-  # ring around the marker.
 
-  style_set_linetype(style, linetype)
+  qgs_apply_constants(style, linetype, marker, slots)
+}
+
+# The layer's constant visual values, applied to a style the same way for
+# a ggplot2 layer and for a tmap one (and for the latter's missing-value
+# companion, ADR 0002).
+qgs_apply_constants <- function(style, linetype, marker, slots) {
+  style <- style_set_linetype(style, linetype)
+  style <- style_set_alpha(style, slots$fill_alpha, slots$stroke_alpha)
+  if (!is.null(marker)) {
+    style <- style_set_marker(style, marker$name, marker$size, marker$angle)
+  }
+  style
+}
+
+# The QGIS marker of a point layer, as ggplot2 draws it: `shape` picks the
+# marker and the symbol spans `size * .pt + stroke * .stroke / 2` points
+# (see QGS_MM_PER_POINT_SIZE). The defaults are only reached when the
+# built layer has no such column at all, which the point geoms always
+# have; an NA is the user's own "do not draw this".
+qgs_point_marker <- function(const, i) {
+  size <- const$size %||% 1.5
+  stroke <- const$stroke %||% 0.5
+  if (is.na(stroke)) {
+    stroke <- 0 # what gg_par() does with a missing `stroke`
+  }
+  qgs_marker(
+    const$shape %||% 19,
+    size * QGS_MM_PER_POINT_SIZE + stroke * QGS_MM_PER_POINT_STROKE,
+    i
+  )
+}
+
+# Where a layer's constant `fill`/`colour` go, and how opaque each slot
+# is, following how ggplot2 draws them: `alpha` applies to a polygon's
+# interior only (its border stays opaque), to a line's own color, and to
+# both colors of a point marker. Which slots a marker draws at all depends
+# on its shape (QGS_PCH$band): R draws pch 0-6 with `colour` alone and
+# fills pch 15-20 with it, using `fill` only for pch 21-25 — so a `fill`
+# mapped to a shape that does not draw it would render something ggplot2
+# does not, which is an error. An alpha of 0 makes the slot "not drawn",
+# the same as an NA color.
+qgs_color_slots <- function(geometry, const, marker, mapped_aes, i) {
+  alpha <- qgs_alpha(const$alpha)
+  fill <- const$fill
+  col <- const$colour
+  fill_alpha <- QGS_OPAQUE
+  stroke_alpha <- QGS_OPAQUE
+  if (geometry == "Polygon") {
+    fill_alpha <- alpha
+  } else if (geometry == "LineString") {
+    stroke_alpha <- alpha
+  } else {
+    fill_alpha <- alpha
+    stroke_alpha <- alpha
+    if (marker$band != "bordered") {
+      if (identical(mapped_aes, "fill")) {
+        stop(
+          "layer ", i, ": `fill` is mapped to data but shape ",
+          num(marker$shape), " does not draw it",
+          call. = FALSE
+        )
+      }
+      # The interior of an open shape is never drawn, and a solid one is
+      # filled with `colour`.
+      fill <- if (marker$band == "solid") col
+      if (marker$band == "open") {
+        fill_alpha <- QGS_OPAQUE
+      } else if (!is.null(mapped_aes)) {
+        # The one color of a solid shape varies per feature, and a QGIS
+        # symbol varies one color property: the marker loses its border.
+        col <- NULL
+      }
+    }
+  }
+  if (fill_alpha == 0L) {
+    fill <- NULL
+  }
+  if (stroke_alpha == 0L) {
+    col <- NULL
+  }
+  list(
+    fill = fill,
+    col = col,
+    fill_alpha = fill_alpha,
+    stroke_alpha = stroke_alpha
+  )
+}
+
+# An 0..1 alpha (ggplot2's `alpha`, tmap's `fill_alpha`/`col_alpha`) as
+# QGIS's 0..255. NA means "no alpha given", which draws the color as it is.
+qgs_alpha <- function(alpha) {
+  if (is.null(alpha) || is.na(alpha)) {
+    return(QGS_OPAQUE)
+  }
+  as.integer(round(alpha * 255))
 }
 
 # The constant aesthetics ggplot2 computed for a layer, taken from its
 # first feature (only meaningful for aesthetics that are not mapped).
-# With `sf_defaults` (sf layers), NA is GeomSf's "use the per-geometry
-# default" sentinel, so it falls back to geom_sf()'s defaults. For
-# data.frame geoms the built values are theme-resolved and concrete, so
-# NA really means "not drawn" and becomes NULL; only a missing linewidth
-# (geom_point has none) keeps the 0.2 default, matching the marker
-# outline sf points get today.
-qgs_layer_constants <- function(computed, sf_defaults, i) {
+# ggplot2 (>= 4.0, which this package requires) resolves every geom's
+# defaults against the theme during the build — GeomSf's per-geometry ones
+# included — so a color is concrete here unless the user asked for NA,
+# which means "not drawn" and becomes NULL. A missing `linewidth` keeps
+# the 0.2 default; the point geoms have none, but they draw their ring
+# with `stroke` instead.
+qgs_layer_constants <- function(computed, geometry, i) {
   first_or <- function(name, default) {
     v <- computed[[name]]
     if (length(v) == 0L || is.na(v[[1L]])) default else v[[1L]]
   }
-  if (sf_defaults) {
-    return(list(
-      colour = first_or("colour", "grey35"),
-      fill = first_or("fill", "grey90"),
-      linewidth = first_or("linewidth", 0.2),
-      linetype = qgs_constant_linetype(computed[["linetype"]], i)
-    ))
+  is_point <- geometry == "Point"
+  # The marker constants and the opacity cannot vary per feature (see
+  # qgs_constant()); the marker ones are only read where they are drawn,
+  # so an aesthetic ggplot2 itself ignores (`size` on a polygon layer)
+  # does not warn.
+  point_constant <- function(name) {
+    if (is_point) qgs_constant(computed[[name]], name, i)
   }
   list(
     colour = first_or("colour", NULL),
     fill = first_or("fill", NULL),
     linewidth = first_or("linewidth", 0.2),
-    linetype = qgs_constant_linetype(computed[["linetype"]], i)
+    linetype = qgs_constant_linetype(computed[["linetype"]], i),
+    size = point_constant("size"),
+    shape = point_constant("shape"),
+    stroke = point_constant("stroke"),
+    alpha = qgs_constant(computed[["alpha"]], "alpha", i)
   )
+}
+
+# The value of a visual constant, taken from the layer's first feature: the
+# renderers vary the color and nothing else, so a value that differs
+# between features (a mapped `size`/`shape`/`alpha`, tmap's
+# `lwd = c(1, 2)`) loses all but the first, with a warning. NULL when the
+# aesthetic has no column at all (e.g. `size` of a polygon layer).
+qgs_constant <- function(values, name, i) {
+  if (length(values) == 0L) {
+    return(NULL)
+  }
+  if (length(unique(values)) > 1L) {
+    warning(
+      "layer ", i, ": a varying `", name, "` is not supported; the first ",
+      "value is used for every feature",
+      call. = FALSE
+    )
+  }
+  values[[1L]]
 }
 
 # The layer's constant linetype, or solid with a warning when it varies
@@ -1162,27 +1354,25 @@ qgs_constant_linetype <- function(values, i, what = "linetype") {
   if (length(v) == 0L || is.na(v[[1L]])) "solid" else v[[1L]]
 }
 
-# For a layer without a fill/colour mapping, reproduce ggplot2's constant
-# colors: interior + border for polygons; for lines and points the single
-# color is the stroke/marker color, with a matching ring (ggplot2 points
-# have no distinct border). A NULL color means "not drawn", which only a
-# polygon's fill or an outline can express — a layer that would draw
-# nothing at all is an error.
-qgs_single_style <- function(const, is_polygon, outline_width, i) {
-  main <- if (is_polygon) const$fill else const$colour
-  if (is.null(main) && (!is_polygon || is.null(const$colour))) {
+# For a layer without a varying color: the constant colors, already routed
+# to their slots (see qgs_color_slots() and its tmap counterpart). `fill`
+# is the interior — a polygon's, a marker's — and `col` the outline, or a
+# line's own color. NULL means "not drawn" (an NA color, or an alpha of
+# 0), which every slot but a line's color can express: a polygon and a
+# marker are still drawn by their outline alone (R's open pch are). A
+# layer with nothing left to draw is an error.
+qgs_single_style <- function(geometry, fill, col, outline_width, i) {
+  is_line <- geometry == "LineString"
+  main_rgb <- qgs_rgb(if (is_line) col else fill)
+  col_rgb <- qgs_rgb(col)
+  if (is.null(main_rgb) && (is_line || is.null(col_rgb))) {
     stop(
-      "layer ", i, ": the layer would not be drawn (",
-      if (is_polygon) "both `fill` and `colour` are" else "`colour` is",
-      " NA)",
+      "layer ", i, ": the layer would not be drawn (the colors are NA or ",
+      "fully transparent)",
       call. = FALSE
     )
   }
-  style_set_outline(
-    style_single(qgs_rgb(main)),
-    qgs_rgb(const$colour),
-    outline_width
-  )
+  style_set_outline(style_single(main_rgb), col_rgb, outline_width)
 }
 
 # The gradient of a trained continuous scale, sampled at evenly spaced

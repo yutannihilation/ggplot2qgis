@@ -58,7 +58,7 @@ tools/qgis/render_project.py one.qgs one.png \
 ## marker_shapes.py
 
 Draws QGIS's SimpleMarker shapes at a known size and measures each one,
-which is how the pch → marker table in `R/tmap.R` was derived: QGIS sizes
+which is how the pch → marker table in `R/marker.R` was derived: QGIS sizes
 a marker by its width, except `equilateral_triangle`, which is inscribed
 in the circle of that diameter.
 
