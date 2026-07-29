@@ -120,6 +120,83 @@ test_that("text size, family and color are carried over", {
   expect_match(out, 'textColor="255,0,0,255,rgb:1,0,0,1"', fixed = TRUE)
 })
 
+test_that("line labels are placed on the line, polygon ones on the centroid", {
+  nc <- read_nc()
+  lines <- sf::st_cast(sf::st_geometry(nc)[1:3], "MULTILINESTRING")
+  lines <- sf::st_sf(NAME = nc$NAME[1:3], geometry = lines)
+
+  dir <- local_out_dir()
+  suppressWarnings({
+    write_qgs(
+      ggplot2::ggplot(lines) +
+        ggplot2::geom_sf_text(ggplot2::aes(label = NAME)),
+      file.path(dir, "lines.qgs")
+    )
+    write_qgs(
+      ggplot2::ggplot(nc) + ggplot2::geom_sf_text(ggplot2::aes(label = NAME)),
+      file.path(dir, "poly.qgs")
+    )
+  })
+
+  # ggplot2 centers the text on the geometry, so a line label goes on the
+  # line (1 | 8) rather than above it (2 | 8, QGIS's default).
+  out <- read_qgs(file.path(dir, "lines.qgs"))
+  expect_match(out, 'layerType="LineGeometry"', fixed = TRUE)
+  expect_match(out, 'placementFlags="9"', fixed = TRUE)
+  # The flag does not apply to a polygon label, which keeps QGIS's default.
+  out <- read_qgs(file.path(dir, "poly.qgs"))
+  expect_match(out, 'layerType="PolygonGeometry"', fixed = TRUE)
+  expect_match(out, 'placementFlags="10"', fixed = TRUE)
+})
+
+test_that("a labels-only layer masks nothing", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) + ggplot2::geom_sf_text(ggplot2::aes(label = NAME))
+
+  dir <- local_out_dir()
+  path <- file.path(dir, "proj.qgs")
+  suppressWarnings(write_qgs(p, path))
+
+  out <- read_qgs(path)
+  # Its features are not drawn, so there is nothing under the labels.
+  expect_match(out, 'maskEnabled="0"', fixed = TRUE)
+  expect_match(out, 'maskedSymbolLayers=""', fixed = TRUE)
+  expect_equal(nrow(masked_symbol_layers(out)), 0L)
+})
+
+test_that("the text size is in the layer's size.unit", {
+  nc <- read_nc()
+  text_layer <- function(...) {
+    ggplot2::ggplot(nc) +
+      ggplot2::geom_sf_text(ggplot2::aes(label = NAME), size = 9, ...)
+  }
+
+  dir <- local_out_dir()
+  # stat_sf_coordinates warns about st_point_on_surface on lon/lat data
+  suppressWarnings({
+    write_qgs(text_layer(size.unit = "pt"), file.path(dir, "pt.qgs"))
+    write_qgs(text_layer(size.unit = "cm"), file.path(dir, "cm.qgs"))
+  })
+
+  # Already points, so no conversion; 9 cm is 10 times 9 mm.
+  expect_match(read_qgs(file.path(dir, "pt.qgs")), 'fontSize="9"', fixed = TRUE)
+  expect_match(
+    read_qgs(file.path(dir, "cm.qgs")),
+    paste0('fontSize="', num(round(9 * 10 * 72.27 / 25.4, 7)), '"'),
+    fixed = TRUE
+  )
+})
+
+test_that("an unknown size.unit is an error", {
+  nc <- read_nc()
+  p <- ggplot2::ggplot(nc) +
+    ggplot2::geom_sf_text(ggplot2::aes(label = NAME), size.unit = "furlong")
+  expect_error(
+    suppressWarnings(write_qgs(p, file.path(local_out_dir(), "x.qgs"))),
+    "unsupported `size.unit`: furlong"
+  )
+})
+
 test_that("geom_text on a data.frame becomes labeled points", {
   d <- data.frame(
     lon = c(140.0, 141.0),

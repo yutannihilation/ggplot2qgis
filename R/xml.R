@@ -119,6 +119,25 @@ xw_empty <- function(w, tag, attrs = NULL) {
   xw_end(w)
 }
 
+# Records the id of a symbol layer just written, so that a later element
+# of the same document can reference it. Needed because the ids are
+# generated (a fresh UUID each) while writing, and QGIS's label masking
+# references the symbol layers it erases by id — which the <labeling>
+# element, written after the <renderer-v2>, otherwise could not know.
+# The reader (xw_symbol_layers()) is responsible for resetting the list.
+xw_record_symbol_layer <- function(w, id) {
+  w$symbol_layers <- c(w$symbol_layers, id)
+  invisible(w)
+}
+
+# The symbol layer ids recorded since the last call, oldest first, and
+# clears them.
+xw_symbol_layers <- function(w) {
+  ids <- w$symbol_layers %||% character()
+  w$symbol_layers <- NULL
+  ids
+}
+
 # Return the fragment.
 xw_finish <- function(w) {
   if (length(w$tags) > 0L) {

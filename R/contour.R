@@ -1,10 +1,11 @@
-# tidyterra::geom_spatraster_contour() and
-# geom_spatraster_contour_filled() layers: unlike the other tidyterra
-# raster geoms these draw *vector* shapes — isolines and the bands
-# between them — so the layer becomes an ordinary GeoPackage-backed
-# LineString / Polygon layer rather than a GDAL raster layer.
+# tidyterra::geom_spatraster_contour(),
+# geom_spatraster_contour_text() and geom_spatraster_contour_filled()
+# layers: unlike the other tidyterra raster geoms these draw *vector*
+# shapes — isolines and the bands between them — so the layer becomes an
+# ordinary GeoPackage-backed LineString / Polygon layer rather than a GDAL
+# raster layer.
 #
-# Neither is recomputed here — they are what
+# None of them is recomputed here — they are what
 # StatTerraSpatRasterContour / StatTerraSpatRasterContourFill already put
 # in the built data, so the geom's `breaks`/`bins`/`binwidth` (and the
 # `maxcell` downsampling and `mask_projection`) are reproduced by
@@ -17,16 +18,29 @@
 # spatraster.R), which is all it is read for: the band count and the band
 # name.
 
-# The geoms sharing this machinery that are not supported. Detection has
-# to be by geom, not by stat: geom_spatraster_contour_text() is a
-# different geom on the *same* StatTerraSpatRasterContour.
-QGS_UNSUPPORTED_CONTOUR_GEOMS <- c(
-  GeomSpatRasterContourText = "geom_spatraster_contour_text()"
+# The contour stats, and for each the geoms this file knows how to
+# convert. Detection has to be by geom as well as by stat:
+# geom_spatraster_contour() and geom_spatraster_contour_text() are
+# different geoms on the *same* StatTerraSpatRasterContour, and they
+# become different QGIS layers.
+QGS_CONTOUR_GEOMS <- list(
+  StatTerraSpatRasterContour = c(
+    "GeomSpatRasterContour", "GeomSpatRasterContourText"
+  ),
+  StatTerraSpatRasterContourFill = "GeomSpatRasterContourFilled"
 )
 
 qgs_is_spatraster_contour_layer <- function(layer) {
   inherits(layer$stat, "StatTerraSpatRasterContour") &&
     inherits(layer$geom, "GeomSpatRasterContour")
+}
+
+# geom_spatraster_contour_text() draws the same isolines with the contour
+# value written along them, so the QGIS layer is the isoline layer with
+# labels enabled (see qgs_contour_text_label_spec()).
+qgs_is_spatraster_contour_text_layer <- function(layer) {
+  inherits(layer$stat, "StatTerraSpatRasterContour") &&
+    inherits(layer$geom, "GeomSpatRasterContourText")
 }
 
 # geom_spatraster_contour_filled() has its own stat (not a subclass of
@@ -37,28 +51,41 @@ qgs_is_spatraster_contour_filled_layer <- function(layer) {
     inherits(layer$geom, "GeomSpatRasterContourFilled")
 }
 
-# Rejects the contour geoms above by name. They would otherwise fall
-# through to the data.frame path, whose error blames the wrong thing
-# ("unsupported geom for data.frame data").
+# Rejects a layer that uses one of the contour stats with a geom none of
+# the predicates above claimed. It would otherwise fall through to the
+# data.frame path, whose error blames the wrong thing ("unsupported geom
+# for data.frame data").
 qgs_check_contour_geom <- function(layer, i) {
-  geom <- class(layer$geom)[[1L]]
-  if (geom %in% names(QGS_UNSUPPORTED_CONTOUR_GEOMS)) {
-    stop(
-      "layer ", i, ": ", QGS_UNSUPPORTED_CONTOUR_GEOMS[[geom]],
-      " is not supported",
-      call. = FALSE
-    )
+  for (stat in names(QGS_CONTOUR_GEOMS)) {
+    if (inherits(layer$stat, stat)) {
+      stop(
+        "layer ", i, ": unsupported geom on a ", stat, " layer: ",
+        class(layer$geom)[[1L]],
+        call. = FALSE
+      )
+    }
   }
   invisible(NULL)
 }
 
-# The contour lines of a geom_spatraster_contour() layer as an sf object:
-# one LINESTRING per contour piece, with the contour value (`level`) and
-# the band name (`lyr`) as attributes.
-qgs_contour_sf <- function(built, layer, i) {
+# The contour lines of a geom_spatraster_contour() layer — or, with
+# `text = TRUE`, of a geom_spatraster_contour_text() one — as an sf
+# object: one LINESTRING per contour piece, with the contour value
+# (`level`) and the band name (`lyr`) as attributes. The text layer also
+# gets the text drawn along the line as a `label` attribute, which is the
+# field QGIS labels the features with.
+qgs_contour_sf <- function(built, layer, i, text = FALSE) {
+  geom <- if (text) {
+    "geom_spatraster_contour_text()"
+  } else {
+    "geom_spatraster_contour()"
+  }
+  columns <- c("x", "y", "group", "level", "lyr")
+  if (text) {
+    columns <- c(columns, "label")
+  }
   computed <- qgs_contour_computed(
-    built, layer, i, "geom_spatraster_contour()",
-    c("x", "y", "group", "level", "lyr"), "contour lines"
+    built, layer, i, geom, columns, "contour lines"
   )
 
   # One feature per contour piece: the stat's `group` is unique per level
@@ -83,6 +110,11 @@ qgs_contour_sf <- function(built, layer, i) {
     lyr = as.character(computed$lyr[first_rows]),
     stringsAsFactors = FALSE
   )
+  if (text) {
+    # NULL when the geom places no labels, which leaves the column (and
+    # with it the layer's labeling, see qgs_contour_text_label_spec()) out.
+    attrs$label <- qgs_contour_label_text(computed, layer, first_rows, i)
+  }
   sf::st_sf(
     attrs,
     geometry = sf::st_sfc(geoms, crs = qgs_contour_crs(built))
@@ -196,6 +228,73 @@ qgs_contour_crs <- function(built) {
   sf::st_crs(crs)
 }
 
+# The text a geom_spatraster_contour_text() layer draws along each of the
+# lines `rows` indexes, computed the way the geom's draw_panel() does:
+# the `label` aesthetic — the contour value unless it was mapped, which
+# is what the geom's default `label = "a"` stands for — run through the
+# geom's `label_format`.
+#
+# NULL when `label_format` is NULL, the geom's way of spelling "draw the
+# lines but place no labels" (it swaps in isoband's label_placer_none()).
+#
+# `label_format` is applied to one value per level, not per line: it is a
+# scales::label_*() function by default, and those decide their accuracy
+# from the whole vector they are given, so a per-line call could format
+# the same level differently.
+qgs_contour_label_text <- function(computed, layer, rows, i) {
+  fmt <- qgs_geom_param(layer, "label_format")
+  if (is.null(fmt)) {
+    return(NULL)
+  }
+
+  # The geom sorts by `group` (level, then piece) before taking the first
+  # label of each level, so the order of the levels is that order too.
+  ord <- order(computed$group)
+  level <- computed$level[ord]
+  label <- computed$label[ord]
+  if (identical(as.character(label[[1L]]), "a")) {
+    label <- level
+  }
+  levels <- unique(level)
+  per_level <- label[match(levels, level)]
+
+  text <- if (is.function(fmt)) {
+    fmt(as.double(per_level))
+  } else {
+    # A character vector of labels, one per level, positionally (the geom
+    # aborts on a length mismatch when it draws; it never gets that far
+    # here).
+    if (!is.character(fmt) || length(fmt) != length(levels)) {
+      stop(
+        "layer ", i, ": `label_format` must be a function, NULL, or one ",
+        "label per contour level (", length(levels), "), got ",
+        length(fmt), " of class ", class(fmt)[[1L]],
+        call. = FALSE
+      )
+    }
+    fmt
+  }
+  as.character(text)[match(computed$level[rows], levels)]
+}
+
+# The label settings of a geom_spatraster_contour_text() layer, in the
+# shape qgs_label_spec() returns: the `label` attribute written by
+# qgs_contour_sf() rendered by QGIS's labeling engine, in the text styles
+# the geom computed. NULL when there is no such attribute, i.e. when the
+# geom places no labels either.
+#
+# Unlike the text geoms this is *not* a labels-only layer: the geom draws
+# the isolines as well, so the layer keeps its line symbol. It is masked,
+# which is how the gap isoband::isolines_grob() breaks in each line under
+# its label is reproduced (see write_label_mask()).
+qgs_contour_text_label_spec <- function(built, layer, i, d) {
+  if (!"label" %in% names(d)) {
+    return(NULL)
+  }
+  styles <- qgs_label_text_styles(built@data[[i]], qgs_text_size_unit(layer, i))
+  c(list(field = "label"), styles, list(background = NULL, mask = TRUE))
+}
+
 # Which aesthetic drives the varying color of a contour layer, in the
 # shape qgs_style_attribute() returns. The contour data has no user
 # columns, so the bare-column-name rule cannot apply: the only supported
@@ -215,6 +314,41 @@ qgs_contour_style_attribute <- function(plot, layer, i) {
     return(NULL)
   }
   qgs_check_contour_level_mapping(quo, "colour", "geom_spatraster_contour()", i)
+  list(aes = "colour", attribute = "level")
+}
+
+# The same for a geom_spatraster_contour_text() layer, whose `colour`
+# is the color of the lines *and* of the labels. The lines take the
+# renderer, like the isolines do; the labels cannot follow it, since a
+# QGIS labeling carries a single text color, so they are drawn in the
+# first feature's color with a warning — the way the other aesthetics
+# these renderers cannot vary are handled (see qgs_constant()). `fill` is
+# not drawn at all, as on the isolines.
+qgs_contour_text_style_attribute <- function(plot, layer, i) {
+  if (!is.null(layer$mapping[["fill"]] %||% plot@mapping[["fill"]])) {
+    stop(
+      "layer ", i, ": geom_spatraster_contour_text() draws lines and text, ",
+      "so a `fill` mapping is not supported",
+      call. = FALSE
+    )
+  }
+  quo <- layer$mapping[["colour"]] %||% plot@mapping[["colour"]]
+  if (is.null(quo)) {
+    return(NULL)
+  }
+  qgs_check_contour_level_mapping(
+    quo, "colour", "geom_spatraster_contour_text()", i
+  )
+  # Silent when the geom places no labels: there is then nothing the
+  # renderer fails to color (see qgs_contour_label_text()).
+  if (!is.null(qgs_geom_param(layer, "label_format"))) {
+    warning(
+      "layer ", i, ": a QGIS labeling has a single text color, so the ",
+      "labels of a geom_spatraster_contour_text() layer cannot follow a ",
+      "`colour` mapping; the first feature's color is used for every label",
+      call. = FALSE
+    )
+  }
   list(aes = "colour", attribute = "level")
 }
 

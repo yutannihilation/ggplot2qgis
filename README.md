@@ -201,6 +201,28 @@ write_qgs(p, "volcano_bands.qgs")
 The bands become `elevation_contour_filled` and the lines on top of them
 `elevation_contour`.
 
+`geom_spatraster_contour_text()` draws the same lines with their value written
+along them, so it becomes that same line layer with QGIS labeling switched on.
+The text is written as a `label` attribute, run through the geom's
+`label_format` — so a custom format is reproduced as it is:
+
+``` r
+p <- ggplot() +
+  geom_spatraster_contour_text(
+    data = volcano2,
+    label_format = scales::label_number(suffix = " m")
+  )
+
+write_qgs(p, "volcano_contour_text.qgs")
+```
+
+The layer becomes `elevation_contour_text`, labeled `"80 m"`, `"90 m"`, ... in
+the geom's text size, font family and color. QGIS places each label on its
+line and masks the line under it, reproducing the gap ggplot2 breaks there.
+Mapping `colour` colors the lines through the same scale machinery as the
+plain isolines, but a QGIS labeling has a single text color, so every label is
+drawn in the first feature's, with a warning.
+
 ### tmap
 
 `tm_raster()` on a raster shape (a stars object, a `SpatRaster` or a
@@ -240,6 +262,9 @@ write_qgs(x, "land.qgs")
   - [ ] `geom_spatraster()` on a multi-layer SpatRaster (tidyterra facets
     by band, so one layer per band); the contour geoms on one too (they do
     not facet, so all bands' shapes would share a layer)
-  - [ ] `geom_spatraster_contour_text()` (contour labels)
+  - [ ] the label colors of a `geom_spatraster_contour_text()` layer whose
+    `colour` is mapped: they need a data-defined text color (the renderer's
+    classes as a QGIS expression) rather than the single one a QGIS
+    labeling carries, so today they all take the first feature's color
   - [ ] tidyterra's color tables (`scale_fill_coltab()`)
   - [ ] tmap's `tm_rgb()` / `tm_rgba()`
