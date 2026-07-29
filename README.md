@@ -9,9 +9,9 @@ Export a [ggplot2](https://ggplot2.tidyverse.org/) map plot (e.g. `geom_sf()`)
 or a [tmap](https://r-tmap.github.io/tmap/) map as a
 [QGIS](https://qgis.org/) project (`.qgs`) file.
 
-`write_qgs()` takes a ggplot2 plot whose layers are backed by
-[sf](https://r-spatial.github.io/sf/) objects (vector layers) or rasters
-(see *Rasters* below) and writes a QGIS project. The data of each layer is
+`write_qgs()` takes a ggplot2 plot or a tmap object whose layers are backed
+by [sf](https://r-spatial.github.io/sf/) objects (see *Vector* below) or by
+rasters (see *Raster*) and writes a QGIS project. The data of each layer is
 saved as a GeoPackage (a GeoTIFF for raster layers) alongside the `.qgs`,
 and each layer is styled after the plot's trained color scale:
 
@@ -31,7 +31,16 @@ You can install ggplot2qgis via [R-universe](https://yutannihilation.r-universe.
 install.packages("ggplot2qgis", repos = c("https://yutannihilation.r-universe.dev", "https://cloud.r-project.org"))
 ```
 
-## Usage
+## Vector
+
+A vector layer's data is saved as a GeoPackage table and the layer gets a
+symbol renderer. Constant outline colors and widths, and constant line
+types (`linetype` / `lty`), are carried over as well.
+
+### ggplot2
+
+`geom_sf()` on an [sf](https://r-spatial.github.io/sf/) object is the base
+case:
 
 ``` r
 library(ggplot2)
@@ -48,6 +57,10 @@ write_qgs(p, "nc.qgs")
 Open `nc.qgs` in QGIS: the polygons are rendered with the same fill gradient
 as the ggplot2 plot, and the data lives in `nc_data/`.
 
+<p align="center">
+<img src="man/figures/qgis_nc.png" width="70%" alt="The exported project open in QGIS, the North Carolina counties filled with the same blue gradient as the ggplot2 plot">
+</p>
+
 To add an XYZ tile basemap below the layers, pass `basemap` a predefined key
 or an XYZ URL template:
 
@@ -55,37 +68,29 @@ or an XYZ URL template:
 write_qgs(p, "nc.qgs", basemap = "osm")
 ```
 
-![A ggplot2 map (front) and the exported QGIS project (back) showing the same North Carolina counties with the same fill colors over an OpenStreetMap basemap](man/figures/screenshot.png)
+<p align="center">
+<img src="man/figures/qgis_nc_osm.png" width="70%" alt="The same QGIS project with an OpenStreetMap basemap drawn below the counties">
+</p>
+
+`geom_sf_text()` and `geom_sf_label()` become labels-only QGIS layers drawn
+by QGIS's own labeling engine, and `geom_point()`, `geom_path()`,
+`geom_line()` and `geom_polygon()` on a plain data frame are converted to
+sf layers (the plot must use `coord_sf()`).
 
 See `?write_qgs` for the full set of options (`use_plot_crs`,
 `gradient_style`, `basemap`).
 
-### Rasters
+### tidyterra
 
-A raster layer becomes a QGIS raster layer: the data is written as a
-GeoTIFF and rendered with a single-band pseudocolor ramp reproducing the
-plot's continuous `fill` scale. Currently, [tidyterra](https://dieghernan.github.io/tidyterra/)'s `geom_spatraster()` is supported:
+[tidyterra](https://dieghernan.github.io/tidyterra/)'s `geom_spatvector()`
+(and `geom_spatvector_text()` / `geom_spatvector_label()`) works too — they
+are wrappers of `geom_sf()`, and tidyterra's `fortify()` method turns the
+`SpatVector` into an sf object, so such a layer is styled by exactly the
+same rules:
 
 ``` r
 library(tidyterra)
 
-volcano2 <- terra::rast(system.file("extdata/volcano2.tif", package = "tidyterra"))
-
-p <- ggplot() +
-  geom_spatraster(data = volcano2) +
-  scale_fill_whitebox_c()
-
-write_qgs(p, "volcano.qgs")
-```
-
-### SpatVectors
-
-tidyterra's `geom_spatvector()` (and `geom_spatvector_text()` /
-`geom_spatvector_label()`) works too — they are wrappers of `geom_sf()`, and
-tidyterra's `fortify()` method turns the `SpatVector` into an sf object, so
-such a layer is styled by exactly the same rules:
-
-``` r
 cyl <- terra::vect(system.file("extdata/cyl.gpkg", package = "tidyterra"))
 
 p <- ggplot(cyl) +
@@ -93,6 +98,10 @@ p <- ggplot(cyl) +
 
 write_qgs(p, "cyl.qgs")
 ```
+
+<p align="center">
+<img src="man/figures/qgis_cyl.png" width="70%" alt="A SpatVector of Castile and Leon provinces in QGIS, each province in its own category color">
+</p>
 
 ### tmap
 
@@ -108,13 +117,58 @@ x <- tm_basemap("OpenStreetMap") +
   tm_shape(nc) +
   tm_polygons(fill = "AREA")
 
-write_qgs(x, "nc.qgs")
+write_qgs(x, "nc_tmap.qgs")
 ```
 
-`tm_raster()` on a raster shape (a stars object or a `SpatRaster`) becomes a
-QGIS raster layer, with the classes, colors and legend labels tmap trained —
-a discrete color ramp for `tm_scale_intervals()`, a paletted renderer for a
-categorical one, an interpolated ramp for `tm_scale_continuous()`:
+<p align="center">
+<img src="man/figures/qgis_nc_tmap.png" width="70%" alt="A tmap map exported to QGIS, the counties classified with tmap's own interval breaks over an OpenStreetMap basemap">
+</p>
+
+`tm_polygons()` / `tm_fill()` / `tm_borders()`, `tm_lines()` and the symbol
+layers (`tm_symbols()` / `tm_dots()` / `tm_bubbles()` / `tm_squares()`, on
+point shapes) are supported. Beyond the colors, the constants tmap computed
+for the layer — `lwd`, `lty`, `size`, `shape`, `fill_alpha` and `col_alpha`
+— are carried over: the marker size in millimeters, the pch translated to
+the QGIS marker of the same outline, and the alphas as the alpha component
+of the respective colors.
+
+## Raster
+
+A raster layer's data is written as a GeoTIFF next to the project, and
+missing cells become the GeoTIFF's nodata value.
+
+### tidyterra
+
+`geom_spatraster()` becomes a single-band pseudocolor layer whose color ramp
+reproduces the plot's continuous `fill` scale:
+
+``` r
+library(tidyterra)
+
+volcano2 <- terra::rast(system.file("extdata/volcano2.tif", package = "tidyterra"))
+
+p <- ggplot() +
+  geom_spatraster(data = volcano2) +
+  scale_fill_whitebox_c()
+
+write_qgs(p, "volcano.qgs")
+```
+
+<p align="center">
+<img src="man/figures/qgis_volcano.png" width="70%" alt="The volcano2 elevation raster in QGIS, drawn with a pseudocolor ramp matching the whitebox fill scale">
+</p>
+
+`geom_spatraster_rgb()` becomes a multiband (true color) layer instead, with
+the layer's `r`/`g`/`b` band selection, its `zlim`/`stretch` rescaling and
+its constant `alpha` carried over.
+
+### tmap
+
+`tm_raster()` on a raster shape (a stars object, a `SpatRaster` or a
+`RasterLayer`) becomes a QGIS raster layer, with the classes, colors and
+legend labels tmap trained — a discrete color ramp for
+`tm_scale_intervals()`, a paletted renderer for a categorical one, an
+interpolated ramp for `tm_scale_continuous()`:
 
 ``` r
 library(stars)
@@ -126,20 +180,25 @@ x <- tm_shape(land) + tm_raster("cover")
 write_qgs(x, "land.qgs")
 ```
 
+<p align="center">
+<img src="man/figures/qgis_land.png" width="70%" alt="The global land cover raster in QGIS as a paletted layer, the legend listing tmap's land cover classes by name">
+</p>
+
 ## TODOs
 
-- [x] Support labels (`geom_sf_text()` / `geom_sf_label()` / `geom_text()` /
-  `geom_label()`; ggplot2 only)
-- [ ] Support rasters
-  - [x] tidyterra's `geom_spatraster()` (single-band with a continuous
-    fill scale)
-  - [x] RGB rasters (`geom_spatraster_rgb()`)
-  - [ ] multi-band `geom_spatraster()`, contours
-    (`geom_spatraster_contour()`)
-  - [x] tmap's `tm_raster()`
+- Facets
+  - [ ] `facet_wrap()` / `facet_grid()` and tmap's `tm_facets()`: write one
+    layer per panel (named after the strip label) so that the panels can be
+    compared in QGIS, e.g. side by side with QMapCompare. Today ggplot2
+    facets are silently flattened into one layer per geom, and a faceted
+    tmap object is an error.
+- Vector
+  - [ ] tmap's `tm_text()`
+  - [ ] tmap's `tm_symbols()` / `tm_dots()` on polygon shapes (centroids)
+  - [ ] ggplot2's constant `size` / `shape` / `alpha` (tmap's are supported)
+- Raster
+  - [ ] `geom_spatraster()` on a multi-layer SpatRaster (tidyterra facets
+    by band, so one layer per band)
+  - [ ] `geom_spatraster_contour()`, and tidyterra's color tables
+    (`scale_fill_coltab()`)
   - [ ] tmap's `tm_rgb()` / `tm_rgba()`
-- [x] Support tidyterra vector (`geom_spatvector()` and its text/label
-  variants)
-- [x] Support tmap
-  - [ ] symbol size / alpha / line type constants
-  - [ ] `tm_symbols()` on polygons (centroids)
