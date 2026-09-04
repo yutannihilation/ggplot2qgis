@@ -120,6 +120,8 @@ converting `tm_basemap()` to an XYZ tile layer:
 ``` r
 library(tmap)
 
+nc <- sf::st_read(system.file("shape/nc.shp", package = "sf"), quiet = TRUE)
+
 x <- tm_basemap("OpenStreetMap") +
   tm_shape(nc) +
   tm_polygons(fill = "AREA")
