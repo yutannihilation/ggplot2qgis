@@ -55,12 +55,14 @@ test_that("a geom_spatraster_contour() layer becomes a LineString layer", {
     fixed = TRUE
   )
   # No colour mapping: a single symbol in the geom's default grey35 at
-  # its default linewidth (0.2 ggplot2 units).
+  # its default linewidth. Since tidyterra 1.3.0 that default follows
+  # ggplot2's `from_theme(linewidth)` (0.5 units = 0.3764062 mm) rather
+  # than a constant 0.2.
   expect_match(out, 'type="singleSymbol"', fixed = TRUE)
   expect_match(out, 'value="89,89,89,255,rgb:', fixed = TRUE)
   expect_match(
     out,
-    '<Option name="line_width" type="QString" value="0.1505625"/>',
+    '<Option name="line_width" type="QString" value="0.3764062"/>',
     fixed = TRUE
   )
 })
